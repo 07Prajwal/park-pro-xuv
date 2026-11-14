@@ -49,6 +49,12 @@ export interface RunStats {
   collisions: number;
   conesHit: number;
   kerbTouches: number;
+  /** Points per kerb touch before strictness (default 5). */
+  kerbPenalty?: number;
+  /** Times the car rolled against the selected gear on a slope. */
+  rollbacks?: number;
+  /** Speed bumps crossed too fast. */
+  fastBumps?: number;
   /** 0..1, where 1 is perfectly aligned and centred (parking levels). */
   alignment: number;
 }
@@ -69,7 +75,9 @@ export function scoreRun(s: RunStats, parTimeS: number, d: Difficulty): Score {
     { label: 'Corrections', value: -Math.max(0, s.directionChanges - s.idealDirectionChanges) * 5 * k },
     { label: 'Collisions', value: -s.collisions * 20 * k },
     { label: 'Cones', value: -s.conesHit * 8 * k },
-    { label: 'Kerb touches', value: -s.kerbTouches * 5 * k },
+    { label: 'Kerb touches', value: -s.kerbTouches * (s.kerbPenalty ?? 5) * k },
+    { label: 'Rolling back', value: -(s.rollbacks ?? 0) * 10 * k },
+    { label: 'Speed bumps too fast', value: -(s.fastBumps ?? 0) * 8 * k },
     { label: 'Alignment', value: -(1 - Math.min(1, Math.max(0, s.alignment))) * 20 * k },
   ].map((b) => ({ label: b.label, value: Math.round(b.value) }));
   const points = Math.max(0, 100 + breakdown.reduce((a, b) => a + b.value, 0));

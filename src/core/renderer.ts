@@ -74,6 +74,9 @@ export function createRenderContext(
   sun.shadow.normalBias = 0.025;
   sun.shadow.radius = 2.5;
   scene.add(sun, sun.target);
+  // The HDRI's diffuse light ignores shadows and has no bounce from the sunlit ground, so faces
+  // turned away from the sun go near-black; a soft sky / ground fill stands in for the bounce.
+  scene.add(new THREE.HemisphereLight(0xc4d6f0, 0x8f8a82, 0.7));
 
   const post = quality.post ? new PostProcessing(renderer, scene, camera, quality) : null;
 

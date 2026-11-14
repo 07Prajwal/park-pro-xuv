@@ -24,6 +24,10 @@ export interface Spawn {
   z: number;
   /** Heading in radians; 0 faces +Z. */
   yaw: number;
+  /** Height of the floor (default 0, the ground). */
+  y?: number;
+  /** Nose-up pitch in radians, to start on a slope (default 0). */
+  pitch?: number;
 }
 
 export interface Vec3Like {
@@ -62,6 +66,8 @@ function makeSnapshot(): VehicleSnapshot {
 
 export class VehiclePhysics {
   readonly body: RAPIER_NS.RigidBody;
+  /** Collider handles of the car: body, then the two door mirrors. */
+  readonly colliderHandles: number[];
   readonly controller: RAPIER_NS.DynamicRayCastVehicleController;
   readonly drivetrain: Drivetrain;
   readonly wheelConnections: Vec3Like[] = [];
@@ -121,7 +127,7 @@ export class VehiclePhysics {
     const lx = dim.widthM;
     const ly = boxHalfH * 2;
     const lz = dim.lengthM;
-    world.createCollider(
+    const main = world.createCollider(
       R.ColliderDesc.cuboid(dim.widthM / 2, boxHalfH, dim.lengthM / 2)
         .setTranslation(0, boxCentreY, boxCentreZ)
         .setMassProperties(
@@ -135,6 +141,19 @@ export class VehiclePhysics {
         .setActiveEvents(R.ActiveEvents.COLLISION_EVENTS),
       this.body,
     );
+    // Door mirrors stick out beyond the body: they are what touches a gate post first. Massless.
+    this.colliderHandles = [main.handle];
+    for (const side of [1, -1]) {
+      const mirror = world.createCollider(
+        R.ColliderDesc.cuboid(0.09, 0.07, 0.06)
+          .setTranslation(side * (dim.mirrorSpanM / 2 - 0.09), 1.17, boxCentreZ + dim.mirrorAheadM)
+          .setDensity(0)
+          .setFriction(0.3)
+          .setActiveEvents(R.ActiveEvents.COLLISION_EVENTS),
+        this.body,
+      );
+      this.colliderHandles.push(mirror.handle);
+    }
 
     const vc = world.createVehicleController(this.body);
     vc.indexUpAxis = 1;
@@ -295,6 +314,23 @@ export class VehiclePhysics {
     this.applyWheelForces(WHEEL_RL, rearDrive, rearBrake, dt);
     this.applyWheelForces(WHEEL_RR, rearDrive, rearBrake, dt);
 
+    // --- Static hold. Raycast-vehicle brakes only damp wheel slip, so a braked car creeps
+    // downhill at a steady few cm/s. Nearly stopped, let whatever brake force exceeds the
+    // drive act like static friction: cancel the motion along the car and the slope's pull
+    // for this step, up to that force.
+    const holdF = 2 * (frontBrake + rearBrake) - Math.abs(force);
+    if (holdF > 0 && stopped) {
+      const fx = 2 * (q.x * q.z + q.w * q.y);
+      const fy = 2 * (q.y * q.z - q.w * q.x);
+      const fz = 1 - 2 * (q.x * q.x + q.y * q.y);
+      const m = this.body.mass();
+      const j = clamp(-m * (this.speedMs - PHYSICS.gravity * fy * dt), -holdF * dt, holdF * dt);
+      this.scratch.x = fx * j;
+      this.scratch.y = fy * j;
+      this.scratch.z = fz * j;
+      this.body.applyImpulse(this.scratch, true);
+    }
+
     // --- Aero drag + rolling resistance as an impulse against the horizontal velocity.
     const sp = Math.hypot(v.x, v.z);
     if (sp > 1e-3) {
@@ -320,8 +356,8 @@ export class VehiclePhysics {
   reset(spawn?: Spawn): void {
     if (spawn) this.spawn = { ...spawn };
     const s = this.spawn;
-    this.body.setTranslation({ x: s.x, y: 0.05, z: s.z }, true);
-    this.body.setRotation(yawQuat(s.yaw), true);
+    this.body.setTranslation({ x: s.x, y: (s.y ?? 0) + 0.05, z: s.z }, true);
+    this.body.setRotation(yawPitchQuat(s.yaw, s.pitch ?? 0), true);
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.steerPosition = 0;
@@ -395,6 +431,17 @@ function copySnapshot(from: VehicleSnapshot, to: VehicleSnapshot): void {
 
 function yawQuat(yaw: number): QuatLike {
   return { x: 0, y: Math.sin(yaw / 2), z: 0, w: Math.cos(yaw / 2) };
+}
+
+/** Heading `yaw`, then nose up by `pitch` about the car's own +X axis. */
+function yawPitchQuat(yaw: number, pitch: number): QuatLike {
+  const cy = Math.cos(yaw / 2);
+  const sy = Math.sin(yaw / 2);
+  // Nose up rotates +Z towards +Y: a negative rotation about +X.
+  const cp = Math.cos(-pitch / 2);
+  const sp = Math.sin(-pitch / 2);
+  // q = qYaw * qPitch
+  return { x: cy * sp, y: sy * cp, z: -sy * sp, w: cy * cp };
 }
 
 function clamp(v: number, lo: number, hi: number): number {

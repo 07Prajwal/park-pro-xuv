@@ -25,6 +25,9 @@ TEXTURES = {
     'asphalt': ('asphalt_02', '2k'),
     'grass': ('sparse_grass', '1k'),
     'concrete': ('concrete_floor_worn_001', '1k'),
+    'brick': ('red_brick_03', '1k'),
+    'plaster': ('beige_wall_001', '1k'),
+    'pavers': ('interlocking_concrete_pavers', '1k'),
 }
 HDRI_ID = 'kloofendal_48d_partly_cloudy_puresky'
 
@@ -40,10 +43,14 @@ def img(url: str) -> Image.Image:
 
 
 def main() -> None:
+    """Fetch everything, or only the texture names given on the command line (e.g. `brick plaster`)."""
+    only = set(sys.argv[1:])
     os.makedirs(os.path.join(ROOT, 'textures'), exist_ok=True)
     os.makedirs(os.path.join(ROOT, 'hdri'), exist_ok=True)
 
     for name, (pid, res) in TEXTURES.items():
+        if only and name not in only:
+            continue
         print(name)
         base = f'{PH}/Textures/jpg/{res}/{pid}/{pid}'
         diff = img(f'{base}_diff_{res}.jpg').convert('RGB')
@@ -57,6 +64,8 @@ def main() -> None:
         nor.save(f'{out}_nor.webp', 'WEBP', quality=90, method=6)
         orm.save(f'{out}_orm.webp', 'WEBP', quality=85, method=6)
 
+    if only:
+        return
     print('hdri')
     # 1k HDR for image-based lighting (PMREM blurs it anyway).
     with open(os.path.join(ROOT, 'hdri', 'sky_1k.hdr'), 'wb') as f:

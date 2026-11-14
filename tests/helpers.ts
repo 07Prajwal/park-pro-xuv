@@ -1,7 +1,9 @@
 import { PHYSICS, XUV_7XO, XUV_DRIVETRAIN, XUV_TUNING } from '../src/config';
 import { createPhysics, type PhysicsContext } from '../src/core/physics';
 import type { DriveInput } from '../src/input/InputState';
+import type { LevelLayout } from '../src/levels/types';
 import { VehiclePhysics } from '../src/vehicle/VehiclePhysics';
+import { surfaceHull, surfaceWalls } from '../src/world/terrain';
 
 export const dt = PHYSICS.fixedDt;
 
@@ -26,6 +28,15 @@ export async function makeWorld(): Promise<{ ctx: PhysicsContext; car: VehiclePh
   const car = new VehiclePhysics(ctx.R, ctx.world, XUV_7XO, XUV_TUNING, XUV_DRIVETRAIN, { x: 0, z: 0, yaw: 0 });
   run(ctx, car, input(), 1.5);
   return { ctx, car };
+}
+
+/** Ground plus a level's ramps, decks and their parapets (the same hulls the game builds), with the XUV settled on flat ground. */
+export async function makeLevelWorld(layout: LevelLayout): Promise<{ ctx: PhysicsContext; car: VehiclePhysics }> {
+  const w = await makeWorld();
+  for (const s of [...layout.surfaces, ...layout.surfaces.flatMap(surfaceWalls)]) {
+    w.ctx.world.createCollider(w.ctx.R.ColliderDesc.convexHull(surfaceHull(s))!.setFriction(1.0));
+  }
+  return w;
 }
 
 /** Start the engine, hold the brake, select `gear` and release the parking brake. */

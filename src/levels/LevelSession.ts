@@ -1,18 +1,23 @@
 /**
  * One attempt at a level: timer, penalties (direction changes, collisions,
- * cones, kerb touches), gate progress, the parking verdict, the checkpoint
- * (last pose where the car stood still) and the progress hint along the ideal
- * manoeuvre. Renderer-agnostic; the game feeds it the car state every frame.
+ * cones, kerb touches, rolling back on a slope, speed bumps taken too fast),
+ * progress through gates, intermediate parking stops and the final target,
+ * the checkpoint (last place the car stood still) and the progress hint along
+ * the ideal manoeuvre. Renderer-agnostic; the game feeds it the car state
+ * every frame and reacts to the returned events.
  */
 
 import type { CarDimensions } from '../config';
-import { angleDiff, pointInRect, rectSeparation, tyreRects } from './geometry';
+import { angleDiff, pointInRect, rectSeparation, tyreRects, type Vec2 } from './geometry';
 import { samplePath, type SampledPath } from './idealPath';
 import { alignmentOf, evaluateParking, scoreRun, type ParkingVerdict, type Score } from './scoring';
-import type { Difficulty, LevelDef, LevelLayout, OrientedRect, Pose } from './types';
+import type { Difficulty, LevelDef, LevelLayout, OrientedRect, ParkingTarget, Pose } from './types';
+import { kerbRects } from './validate';
 
 export interface CarState {
   pose: Pose;
+  /** Height of the car's floor (physics origin), metres. */
+  y: number;
   speedMs: number;
   selector: string;
   parkingBrake: boolean;
@@ -23,6 +28,19 @@ export interface SessionResult {
   timeS: number;
   verdict: ParkingVerdict | null;
   usedCheckpoint: boolean;
+  /** Set when the attempt ended without finishing. */
+  failed?: string;
+}
+
+/** What happened this frame, for sounds and messages. */
+export interface SessionEvents {
+  kerb: boolean;
+  /** Strength (0..1) of an axle going over a speed bump, 0 if none. */
+  bump: number;
+  bumpTooFast: boolean;
+  rollback: boolean;
+  /** An intermediate parking stop was completed. */
+  stopDone: ParkingTarget | null;
 }
 
 const MOVING_MS = 0.25;
@@ -31,6 +49,8 @@ const CHECKPOINT_STILL_S = 0.6;
 const CONTACT_COOLDOWN_S = 1.0;
 const KERB_COOLDOWN_S = 1.0;
 const PARKED_STILL_S = 0.4;
+const ROLLING_MS = 0.05;
+const LEVEL_TOLERANCE = 0.6;
 
 export class LevelSession {
   readonly layout: LevelLayout;
@@ -43,10 +63,14 @@ export class LevelSession {
   collisions = 0;
   conesHit = 0;
   kerbTouches = 0;
+  rollbacks = 0;
+  fastBumps = 0;
   directionChanges = 0;
   gateIndex = 0;
+  stopIndex = 0;
   usedCheckpoint = false;
   checkpoint: Pose;
+  checkpointY = 0;
   verdict: ParkingVerdict | null = null;
   result: SessionResult | null = null;
   /** Index into `path` nearest to the car (monotonic search window). */
@@ -60,6 +84,13 @@ export class LevelSession {
   private wasOnKerb = false;
   private readonly hitCones = new Set<number>();
   private readonly tyres: OrientedRect[] = [];
+  private readonly kerbs: { rect: OrientedRect; y: number }[];
+  /** Per bump: [front axle inside, rear axle inside]. */
+  private readonly onBump: [boolean, boolean][];
+  private rolled = 0;
+  private rollCounted = false;
+  private readonly events: SessionEvents = { kerb: false, bump: 0, bumpTooFast: false, rollback: false, stopDone: null };
+  private readonly axle: Vec2 = { x: 0, z: 0 };
 
   constructor(
     readonly def: LevelDef,
@@ -73,6 +104,8 @@ export class LevelSession {
     let changes = 0;
     for (let i = 1; i < segs.length; i++) if (segs[i].dir !== segs[i - 1].dir) changes++;
     this.idealDirectionChanges = changes;
+    this.kerbs = kerbRects(this.layout);
+    this.onBump = this.layout.bumps.map(() => [false, false]);
   }
 
   get isParkingLevel(): boolean {
@@ -83,19 +116,33 @@ export class LevelSession {
     return !!this.layout.gates?.length;
   }
 
-  /** Current hint from the ideal manoeuvre, or the gate instruction. */
+  get gatesDone(): boolean {
+    return this.gateIndex >= (this.layout.gates?.length ?? 0);
+  }
+
+  /** The parking space the driver is working towards now (an intermediate stop or the final target). */
+  get currentTarget(): ParkingTarget | null {
+    if (!this.gatesDone) return null;
+    return this.layout.stops?.[this.stopIndex] ?? this.layout.target ?? null;
+  }
+
+  /** Current hint: the next gate's instruction, then the ideal manoeuvre's. */
   get hint(): string {
     if (this.finished) return '';
-    if (this.isCourse) return this.layout.gates![this.gateIndex]?.label ?? '';
+    if (!this.gatesDone) return this.layout.gates![this.gateIndex].label;
+    const t = this.currentTarget;
+    if (t && this.verdict?.ok) return this.secureHint(t);
     const segs = this.layout.ideal;
     if (!segs || !this.path) return '';
-    if (this.pathIndex >= this.path.poses.length - 3) return 'Stop, select P (or apply the parking brake).';
+    if (this.pathIndex >= this.path.poses.length - 3) return t ? this.secureHint(t) : '';
     return segs[this.path.segment[this.pathIndex]].hint;
   }
 
-  /** Next gate rectangle (course levels). */
-  get nextGate(): OrientedRect | null {
-    return this.isCourse && !this.finished ? (this.layout.gates![this.gateIndex]?.rect ?? null) : null;
+  /** Rectangle to highlight on the ground: the next gate, else the current parking space. */
+  get highlight(): OrientedRect | null {
+    if (this.finished) return null;
+    if (!this.gatesDone) return this.layout.gates![this.gateIndex].rect;
+    return this.currentTarget?.zone ?? null;
   }
 
   /** Contact with an obstacle collider (parked car, wall, pillar, lamp post). */
@@ -115,9 +162,14 @@ export class LevelSession {
     return true;
   }
 
-  /** Returns true when a new kerb touch was registered this frame. */
-  update(car: CarState, dt: number): boolean {
-    if (this.finished) return false;
+  update(car: CarState, dt: number): SessionEvents {
+    const ev = this.events;
+    ev.kerb = false;
+    ev.bump = 0;
+    ev.bumpTooFast = false;
+    ev.rollback = false;
+    ev.stopDone = null;
+    if (this.finished) return ev;
     const moving = Math.abs(car.speedMs) > MOVING_MS;
     if (!this.started && moving) this.started = true;
     if (this.started) this.timeS += dt;
@@ -132,47 +184,74 @@ export class LevelSession {
     // Checkpoint: wherever the car has been standing still for a moment.
     if (Math.abs(car.speedMs) < STOPPED_MS) {
       this.stillTime += dt;
-      if (this.stillTime > CHECKPOINT_STILL_S) this.checkpoint = { ...car.pose };
+      if (this.stillTime > CHECKPOINT_STILL_S) {
+        this.checkpoint = { ...car.pose };
+        this.checkpointY = car.y;
+      }
     } else {
       this.stillTime = 0;
     }
 
-    const newKerb = this.updateKerb(car.pose, dt);
+    ev.kerb = this.updateKerb(car, dt);
+    this.updateBumps(car);
+    this.updateRollback(car, dt);
     this.updatePathIndex(car.pose);
 
-    if (this.isCourse) {
-      const g = this.layout.gates![this.gateIndex];
-      if (g && pointInRect(car.pose, g.rect)) {
-        this.gateIndex++;
-        if (this.gateIndex >= this.layout.gates!.length) this.finish(null);
-      }
-    } else if (this.layout.target) {
-      this.verdict = evaluateParking(car.pose, this.layout.target, this.dim);
-      const secured = car.selector === 'P' || car.parkingBrake;
-      if (this.verdict.ok && Math.abs(car.speedMs) < STOPPED_MS && secured) {
-        this.parkedTime += dt;
-        if (this.parkedTime > PARKED_STILL_S) this.finish(this.verdict);
-      } else {
-        this.parkedTime = 0;
-      }
+    const limit = this.layout.rules?.kerbTouchLimit;
+    if (limit !== undefined && this.kerbTouches > limit) {
+      this.fail(`The wheels touched the kerb ${this.kerbTouches} times (${limit} allowed).`);
+      return ev;
     }
-    return newKerb;
+
+    if (!this.gatesDone) {
+      const g = this.layout.gates![this.gateIndex];
+      if (pointInRect(car.pose, g.rect) && Math.abs((g.rect.level ?? 0) - car.y) < 1.5) {
+        this.gateIndex++;
+        if (this.gatesDone && !this.layout.target) this.finish(null);
+      }
+      return ev;
+    }
+    const t = this.currentTarget;
+    if (!t) return ev;
+    this.verdict = evaluateParking(car.pose, t, this.dim);
+    const onFloor = Math.abs((t.zone.level ?? 0) - car.y) < 1;
+    const secured = t.secure === 'both' ? car.selector === 'P' && car.parkingBrake : car.selector === 'P' || car.parkingBrake;
+    if (onFloor && this.verdict.ok && Math.abs(car.speedMs) < STOPPED_MS && secured) {
+      this.parkedTime += dt;
+      if (this.parkedTime > PARKED_STILL_S) {
+        this.parkedTime = 0;
+        if (t === this.layout.target) this.finish(this.verdict);
+        else {
+          this.stopIndex++;
+          this.verdict = null;
+          ev.stopDone = t;
+        }
+      }
+    } else {
+      this.parkedTime = 0;
+    }
+    return ev;
   }
 
-  restoreCheckpoint(): Pose {
+  restoreCheckpoint(): { pose: Pose; y: number } {
     this.usedCheckpoint = true;
     this.lastDir = 0;
-    return { ...this.checkpoint };
+    return { pose: { ...this.checkpoint }, y: this.checkpointY };
   }
 
-  private updateKerb(pose: Pose, dt: number): boolean {
+  private secureHint(t: ParkingTarget): string {
+    return t.secure === 'both' ? 'Hold the brake, apply the parking brake (Space) and select P.' : 'Stop, select P (or apply the parking brake).';
+  }
+
+  private updateKerb(car: CarState, dt: number): boolean {
     this.kerbCooldown -= dt;
-    if (!this.layout.kerbs.length) return false;
-    tyreRects(pose, this.dim, this.tyres);
+    if (!this.kerbs.length) return false;
+    tyreRects(car.pose, this.dim, this.tyres);
     let on = false;
-    for (const t of this.tyres) {
-      for (const k of this.layout.kerbs) {
-        if (rectSeparation(t, k) < 0) {
+    for (const k of this.kerbs) {
+      if (Math.abs(k.y - car.y) > LEVEL_TOLERANCE) continue;
+      for (const t of this.tyres) {
+        if (rectSeparation(t, k.rect) < 0) {
           on = true;
           break;
         }
@@ -186,6 +265,56 @@ export class LevelSession {
       this.kerbCooldown = KERB_COOLDOWN_S;
     }
     return fresh;
+  }
+
+  /** Each axle entering a bump gives a thud; the front axle entering too fast is penalised. */
+  private updateBumps(car: CarState): void {
+    const bumps = this.layout.bumps;
+    if (!bumps.length) return;
+    const fx = Math.sin(car.pose.yaw);
+    const fz = Math.cos(car.pose.yaw);
+    const half = this.dim.wheelbaseM / 2;
+    const speed = Math.abs(car.speedMs);
+    const maxKmh = this.layout.rules?.bumpMaxKmh;
+    bumps.forEach((b, i) => {
+      if (Math.abs((b.level ?? 0) - car.y) > LEVEL_TOLERANCE) return;
+      for (let a = 0; a < 2; a++) {
+        const s = a === 0 ? half : -half;
+        this.axle.x = car.pose.x + fx * s;
+        this.axle.z = car.pose.z + fz * s;
+        const inside = pointInRect(this.axle, b);
+        const state = this.onBump[i];
+        if (inside && !state[a]) {
+          this.events.bump = Math.max(this.events.bump, Math.min(1, speed / 5));
+          // The leading axle (front going forward, rear in reverse) sets the crossing speed.
+          const leading = (a === 0) === car.speedMs >= 0;
+          if (leading && maxKmh !== undefined && speed * 3.6 > maxKmh) {
+            this.fastBumps++;
+            this.events.bumpTooFast = true;
+          }
+        }
+        state[a] = inside;
+      }
+    });
+  }
+
+  /** Rolling against the selected gear (or in N) further than the rule allows counts once per roll. */
+  private updateRollback(car: CarState, dt: number): void {
+    const limit = this.layout.rules?.rollbackM;
+    if (limit === undefined) return;
+    const v = car.speedMs;
+    const against = (car.selector === 'D' && v < -ROLLING_MS) || (car.selector === 'R' && v > ROLLING_MS) || (car.selector === 'N' && Math.abs(v) > ROLLING_MS);
+    if (!against) {
+      this.rolled = 0;
+      this.rollCounted = false;
+      return;
+    }
+    this.rolled += Math.abs(v) * dt;
+    if (this.rolled > limit && !this.rollCounted) {
+      this.rollCounted = true;
+      this.rollbacks++;
+      this.events.rollback = true;
+    }
   }
 
   private updatePathIndex(pose: Pose): void {
@@ -206,6 +335,11 @@ export class LevelSession {
     this.pathIndex = best;
   }
 
+  private fail(reason: string): void {
+    this.finished = true;
+    this.result = { score: { points: 0, stars: 1, breakdown: [] }, timeS: this.timeS, verdict: null, usedCheckpoint: this.usedCheckpoint, failed: reason };
+  }
+
   private finish(verdict: ParkingVerdict | null): void {
     this.finished = true;
     const alignment = verdict && this.layout.target ? alignmentOf(verdict, this.layout.target, this.dim) : 1;
@@ -217,6 +351,9 @@ export class LevelSession {
         collisions: this.collisions,
         conesHit: this.conesHit,
         kerbTouches: this.kerbTouches,
+        kerbPenalty: this.layout.rules?.kerbPenalty,
+        rollbacks: this.rollbacks,
+        fastBumps: this.fastBumps,
         alignment,
       },
       this.layout.parTimeS,

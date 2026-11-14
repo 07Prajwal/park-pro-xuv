@@ -78,6 +78,24 @@ export function endPose(start: Pose, segs: Segment[], d: CarDimensions): Pose {
 }
 
 /**
+ * Forward S-bend that shifts the car sideways by `lateral` metres (positive =
+ * to its left) and ends on the original heading, with the wheel at |steer|.
+ * Returns the two arcs and the distance covered along the heading.
+ */
+export function sBend(lateral: number, steer: number, d: CarDimensions, hints: [string, string]): { segs: Segment[]; along: number } {
+  const R = 1 / Math.abs(curvature(steer, d));
+  const th = Math.acos(1 - Math.min(1, Math.abs(lateral) / (2 * R)));
+  const s = Math.sign(lateral) * Math.abs(steer);
+  return {
+    segs: [
+      { dir: 1, steer: s, dist: R * th, hint: hints[0] },
+      { dir: 1, steer: -s, dist: R * th, hint: hints[1] },
+    ],
+    along: 2 * R * Math.sin(th),
+  };
+}
+
+/**
  * Straight -> arc -> straight into a target pose. The arc (steer, signed yaw
  * change) is given; the two straight lengths are solved so the car ends exactly
  * at `target`. Returns null when either straight would be negative.

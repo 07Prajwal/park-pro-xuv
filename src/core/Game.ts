@@ -20,7 +20,7 @@ import { PointerInput } from '../input/PointerInput';
 import { GuideVisuals } from '../levels/GuideVisuals';
 import { LevelSession } from '../levels/LevelSession';
 import { LEVELS } from '../levels/levels';
-import type { Difficulty, Pose } from '../levels/types';
+import type { Difficulty, OrientedRect, Pose } from '../levels/types';
 import { Hud } from '../ui/Hud';
 import { Menus, type MenuActions } from '../ui/Menus';
 import { ParkingSensors } from '../vehicle/ParkingSensors';
@@ -50,7 +50,8 @@ export class Game {
   private readonly menus: Menus;
   private readonly rig: CameraRig;
   private readonly car: VehiclePhysics;
-  private readonly carCollider: number;
+  /** Body and door-mirror colliders: contacts with any of them are the car's. */
+  private readonly carColliders: Set<number>;
   private readonly lights = new VehicleLights();
   private readonly carVisual: VehicleVisual;
   private readonly sensors: ParkingSensors;
@@ -89,6 +90,7 @@ export class Game {
   private readonly rearRect: ScreenRect = { x: 0, y: 0, w: 1, h: 1 };
   private readonly fullRect: ScreenRect = { x: 0, y: 0, w: 1, h: 1 };
   private readonly pose: Pose = { x: 0, z: 0, yaw: 0 };
+  private shownZone: OrientedRect | null = null;
 
   private constructor(
     private readonly phys: PhysicsContext,
@@ -102,7 +104,7 @@ export class Game {
     this.props = new LevelProps(gfx.scene, phys, assets);
 
     this.car = new VehiclePhysics(phys.R, phys.world, XUV_7XO, XUV_TUNING, XUV_DRIVETRAIN, { x: 0, z: 0, yaw: 0 });
-    this.carCollider = this.car.body.collider(0).handle;
+    this.carColliders = new Set(this.car.colliderHandles);
     this.sensors = new ParkingSensors(phys.R, phys.world, this.car.body, XUV_7XO);
     const paintIdx = Number(new URLSearchParams(location.search).get('paint') ?? 0);
     this.carVisual = new VehicleVisual(this.car, this.lights, PAINT_COLOURS[paintIdx] ?? PAINT_COLOURS[0]);
@@ -173,7 +175,7 @@ export class Game {
     const menu = q.get('menu');
     if (menu === 'tutorial') this.menus.showTutorial(this.session.def, this.session.layout, this.settings.difficulty);
     if (menu === 'pause') this.menus.showPause(this.settings, !!this.session.layout.ideal);
-    if (q.has('x') && q.has('z')) this.car.reset({ x: Number(q.get('x')), z: Number(q.get('z')), yaw: Number(q.get('yaw') ?? 0) });
+    if (q.has('x') && q.has('z')) this.placeCar({ x: Number(q.get('x')), z: Number(q.get('z')), yaw: Number(q.get('yaw') ?? 0) }, Number(q.get('y') ?? 0));
     const gear = q.get('gear');
     if (gear === 'D' || gear === 'R') this.car.drivetrain.selector = gear;
     if (q.has('fast')) this.resultDelayS = 0.01;
@@ -203,11 +205,11 @@ export class Game {
     this.session = new LevelSession(def, this.settings.difficulty, XUV_7XO);
     const L = this.session.layout;
     this.props.build(L);
-    this.guides.setIdeal(this.session.path, L.ideal);
+    this.guides.setIdeal(this.session.path, L.ideal, this.props.terrain);
     this.guides.idealVisible = this.settings.guides;
-    this.props.showZone(L.target?.zone ?? this.session.nextGate);
-    this.car.reset(L.spawn);
-    this.rig.snap();
+    this.shownZone = null;
+    this.syncZone();
+    this.placeCar(L.spawn, 0);
     this.accumulator = 0;
     this.resultTimer = -1;
     this.hud.setLevel(def.id === 1 ? `Level 1 · ${def.title}` : `Level ${def.id} · ${def.title} · ${DIFF_LABEL[this.settings.difficulty]}`);
@@ -259,10 +261,26 @@ export class Game {
 
   private toCheckpoint(): void {
     if (this.session.finished) return;
-    this.car.reset(this.session.restoreCheckpoint());
+    const { pose, y } = this.session.restoreCheckpoint();
+    this.placeCar(pose, y);
+    this.car.notify('Back to your last stop — select a gear to continue');
+  }
+
+  /** Reset the car at a pose on the drivable surface nearest to height `refY`, pitched to the slope. */
+  private placeCar(pose: Pose, refY: number): void {
+    const t = this.props.terrain;
+    const y = t.height(pose.x, pose.z, refY);
+    this.car.reset({ ...pose, y, pitch: t.pitch(pose.x, pose.z, pose.yaw, y) });
     this.rig.snap();
     this.accumulator = 0;
-    this.car.notify('Back to your last stop — select a gear to continue');
+  }
+
+  /** Outline the session's current target or gate (only rebuilt when it changes). */
+  private syncZone(): void {
+    const z = this.session.finished ? null : this.session.highlight;
+    if (z === this.shownZone) return;
+    this.shownZone = z;
+    this.props.showZone(z);
   }
 
   private startDemo(): void {
@@ -295,7 +313,7 @@ export class Game {
     const r = this.session.result!;
     const def = this.session.def;
     let newBest = false;
-    if (record) newBest = recordScore(this.progress, scoreKey(def.id, this.settings.difficulty), { stars: r.score.stars, points: r.score.points, timeS: r.timeS });
+    if (record && !r.failed) newBest = recordScore(this.progress, scoreKey(def.id, this.settings.difficulty), { stars: r.score.stars, points: r.score.points, timeS: r.timeS });
     const next = LEVELS[this.levelIndex + 1];
     const hasNext = !!next && isUnlocked(next.id, this.progress, this.settings.allLevelsOpen);
     this.menus.showResult(def, r, newBest, hasNext, !!this.session.layout.ideal);
@@ -387,7 +405,7 @@ export class Game {
     this.pose.x = root.position.x;
     this.pose.z = root.position.z;
     this.pose.yaw = yawOf(root.quaternion);
-    this.guides.updatePredicted(s.predictedPath && !demo && (d.selector === 'D' || reversing), this.pose, steer, reversing ? -1 : 1);
+    this.guides.updatePredicted(s.predictedPath && !demo && (d.selector === 'D' || reversing), this.pose, steer, reversing ? -1 : 1, root.position.y);
     this.guides.eon.visible = s.eonOutline;
 
     // Views: full-screen rear camera replaces the main view; otherwise main view plus PiPs.
@@ -420,11 +438,11 @@ export class Game {
   };
 
   private handleContacts(): void {
-    const car = this.carCollider;
+    const car = this.carColliders;
     this.phys.events.drainCollisionEvents((h1, h2, started) => {
-      if (!started || (h1 !== car && h2 !== car)) return;
-      const other = h1 === car ? h2 : h1;
-      if (other === this.base.groundHandle || this.props.kerbHandles.has(other)) return;
+      if (!started || car.has(h1) === car.has(h2)) return;
+      const other = car.has(h1) ? h2 : h1;
+      if (other === this.base.groundHandle || this.props.kerbHandles.has(other) || this.props.groundHandles.has(other)) return;
       const cone = this.props.coneHandles.get(other);
       const impact = Math.min(1, Math.abs(this.car.speedMs) / 3);
       if (cone !== undefined) {
@@ -447,22 +465,31 @@ export class Game {
     const c = this.car.curr;
     const s = this.session;
     const wasFinished = s.finished;
-    const gate = s.gateIndex;
     this.pose.x = c.pos.x;
     this.pose.z = c.pos.z;
     this.pose.yaw = yawOfQuat(c.quat.x, c.quat.y, c.quat.z, c.quat.w);
-    const kerb = s.update(
-      { pose: this.pose, speedMs: this.car.speedMs, selector: this.car.drivetrain.selector, parkingBrake: this.car.parkingBrake },
+    const ev = s.update(
+      { pose: this.pose, y: c.pos.y, speedMs: this.car.speedMs, selector: this.car.drivetrain.selector, parkingBrake: this.car.parkingBrake },
       dt,
     );
-    if (kerb) {
+    const limit = s.layout.rules?.kerbTouchLimit;
+    if (ev.kerb) {
       this.audio?.kerbScrape();
-      this.car.notify('Kerb touch');
+      this.car.notify(limit !== undefined && !s.finished ? `Kerb touch — ${Math.max(0, limit - s.kerbTouches + 1)} more ends the attempt` : 'Kerb touch');
     }
-    if (s.gateIndex !== gate) this.props.showZone(s.nextGate);
-    if (!wasFinished && s.finished) {
+    if (ev.bump > 0) this.audio?.bump(0.12 + 0.3 * ev.bump);
+    if (ev.bumpTooFast) this.car.notify(`Too fast over the speed bump — keep below ${s.layout.rules?.bumpMaxKmh ?? 10} km/h`);
+    if (ev.rollback) this.car.notify('Rolling back! Hold the brake while you change gear or release the parking brake');
+    if (ev.stopDone) {
       this.audio?.chime();
-      this.props.showZone(null);
+      this.car.notify(`${capitalise(ev.stopDone.name ?? 'Stop')} done — now drive to the next space`);
+    }
+    this.syncZone();
+    if (!wasFinished && s.finished) {
+      if (s.result?.failed) {
+        this.audio?.bump(0.4);
+        this.car.notify(s.result.failed);
+      } else this.audio?.chime();
       this.resultTimer = this.resultDelayS;
     }
     if (this.resultTimer > 0) {
@@ -641,6 +668,10 @@ export class Game {
       this.fpsTime = 0;
     }
   }
+}
+
+function capitalise(t: string): string {
+  return t.charAt(0).toUpperCase() + t.slice(1);
 }
 
 function yawOfQuat(x: number, y: number, z: number, w: number): number {

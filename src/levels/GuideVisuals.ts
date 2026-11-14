@@ -16,6 +16,7 @@ import { SENSOR_COUNT } from '../vehicle/ParkingSensors';
 import { carFootprint, rectCorners } from './geometry';
 import { advance, type SampledPath } from './idealPath';
 import type { Pose, Segment } from './types';
+import { Terrain } from '../world/terrain';
 
 
 const FORWARD_COLOUR = new THREE.Color(0x3aa0ff);
@@ -47,6 +48,10 @@ export class GuideVisuals {
   private ghostStops: number[] = [];
   private ghostNextStop = 0;
   private ghostEnded = false;
+  /** Ground height under each sample of the ideal path. */
+  private pathY = new Float32Array(0);
+  private terrain = new Terrain([]);
+  private readonly ghostPitch = new THREE.Quaternion();
   private readonly tmp: Pose = { x: 0, z: 0, yaw: 0 };
   private readonly tmp2: Pose = { x: 0, z: 0, yaw: 0 };
 
@@ -99,8 +104,9 @@ export class GuideVisuals {
     }
   }
 
-  /** Show the ideal path for a level (null clears it). */
-  setIdeal(path: SampledPath | null, segs: Segment[] | undefined): void {
+  /** Show the ideal path for a level (null clears it), draped over the level's terrain. */
+  setIdeal(path: SampledPath | null, segs: Segment[] | undefined, terrain: Terrain): void {
+    this.terrain = terrain;
     if (this.ideal) {
       this.ideal.traverse((o) => (o as THREE.Mesh).geometry?.dispose());
       this.group.remove(this.ideal);
@@ -110,17 +116,19 @@ export class GuideVisuals {
     this.ghostSegs = segs ?? [];
     this.stopGhost();
     if (!path || !segs) return;
+    this.pathY = new Float32Array(path.poses.length);
+    let y = 0;
+    path.poses.forEach((p, i) => (this.pathY[i] = y = terrain.height(p.x, p.z, y)));
     const g = new THREE.Group();
-    g.add(pathRibbon(path, segs));
-    // Car outline where the driver should stop (end of each segment before a direction change, and the end).
+    g.add(pathRibbon(path, segs, this.pathY));
+    // Car outline where the driver should stop (direction changes, parking stops and the end).
     const outline = new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.85 });
     for (let i = 0; i < path.poses.length; i++) {
-      const seg = path.segment[i];
       const last = i === path.poses.length - 1;
-      const dirChange = !last && path.segment[i + 1] !== seg && segs[path.segment[i + 1]].dir !== segs[seg].dir;
-      if (!last && !dirChange) continue;
+      if (!last && !isStop(path, segs, i)) continue;
       const c = rectCorners(carFootprint(path.poses[i], this.dim));
-      const pts = [...c, c[0]].map((p) => new THREE.Vector3(p.x, 0.03, p.z));
+      const py = this.pathY[i];
+      const pts = [...c, c[0]].map((p) => new THREE.Vector3(p.x, terrain.height(p.x, p.z, py) + 0.03, p.z));
       const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), outline);
       g.add(line);
     }
@@ -133,7 +141,7 @@ export class GuideVisuals {
   }
 
   /** Predicted corner paths: front corners ahead in D, rear corners behind in R. */
-  updatePredicted(visible: boolean, pose: Pose, steer: number, dir: 1 | -1): void {
+  updatePredicted(visible: boolean, pose: Pose, steer: number, dir: 1 | -1, carY = 0): void {
     this.predicted.visible = visible;
     if (!visible) return;
     const d = this.dim;
@@ -153,11 +161,12 @@ export class GuideVisuals {
         // Ribbon width across the travel direction (perpendicular to the heading).
         const o = ((l * PREDICT_SAMPLES + i) * 2) * 3;
         const w = 0.05;
+        const h = this.terrain.height(cx, cz, carY) + 0.025;
         P[o] = cx + fz * w;
-        P[o + 1] = 0.025;
+        P[o + 1] = h;
         P[o + 2] = cz - fx * w;
         P[o + 3] = cx - fz * w;
-        P[o + 4] = 0.025;
+        P[o + 4] = h;
         P[o + 5] = cz + fx * w;
       }
     }
@@ -198,20 +207,16 @@ export class GuideVisuals {
   playGhost(): boolean {
     const p = this.ghostPath;
     if (!p) return false;
-    // Distances where the driver stops to change direction.
+    // Distances where the driver stops: direction changes and parking stops.
     this.ghostStops = [];
-    for (let i = 1; i < p.poses.length - 1; i++) {
-      const a = this.ghostSegs[p.segment[i]];
-      const b = this.ghostSegs[p.segment[i + 1]];
-      if (a && b && a.dir !== b.dir) this.ghostStops.push(p.s[i]);
-    }
+    for (let i = 1; i < p.poses.length - 1; i++) if (isStop(p, this.ghostSegs, i)) this.ghostStops.push(p.s[i]);
     this.ghostT = 0;
     this.ghostIndex = 0;
     this.ghostNextStop = 0;
     this.ghostEnded = false;
     this.ghostPause = 0.6;
     this.ghost.visible = true;
-    this.placeGhost(p.poses[0]);
+    this.placeGhost(p.poses[0], this.pathY[0]);
     return true;
   }
 
@@ -252,16 +257,28 @@ export class GuideVisuals {
     this.tmp2.x = a.x + (b.x - a.x) * f;
     this.tmp2.z = a.z + (b.z - a.z) * f;
     this.tmp2.yaw = a.yaw + (b.yaw - a.yaw) * f;
-    this.placeGhost(this.tmp2);
+    const y = this.pathY[this.ghostIndex] + (this.pathY[this.ghostIndex + 1] - this.pathY[this.ghostIndex]) * f;
+    this.placeGhost(this.tmp2, y);
   }
 
-  private placeGhost(p: Pose): void {
-    this.ghost.position.set(p.x, 0, p.z);
-    this.ghost.rotation.set(0, p.yaw, 0);
+  private placeGhost(p: Pose, y: number): void {
+    this.ghost.position.set(p.x, y, p.z);
+    const pitch = this.terrain.pitch(p.x, p.z, p.yaw, y);
+    this.ghost.quaternion.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, p.yaw).multiply(this.ghostPitch.setFromAxisAngle(X_AXIS, -pitch));
   }
 }
 
-function pathRibbon(path: SampledPath, segs: Segment[]): THREE.Mesh {
+const X_AXIS = new THREE.Vector3(1, 0, 0);
+
+/** Sample i is the last one of a segment that ends with a stop (direction change or parking stop). */
+function isStop(path: SampledPath, segs: Segment[], i: number): boolean {
+  const seg = path.segment[i];
+  const next = path.segment[i + 1];
+  if (next === undefined || next === seg) return false;
+  return !!segs[seg]?.stop || segs[next]?.dir !== segs[seg]?.dir;
+}
+
+function pathRibbon(path: SampledPath, segs: Segment[], ys: Float32Array): THREE.Mesh {
   const n = path.poses.length;
   const pos = new Float32Array(n * 2 * 3);
   const col = new Float32Array(n * 2 * 3);
@@ -270,7 +287,8 @@ function pathRibbon(path: SampledPath, segs: Segment[]): THREE.Mesh {
     const p = path.poses[i];
     const lx = Math.cos(p.yaw) * PATH_HALF_W;
     const lz = -Math.sin(p.yaw) * PATH_HALF_W;
-    pos.set([p.x + lx, 0.02, p.z + lz, p.x - lx, 0.02, p.z - lz], i * 6);
+    const y = ys[i] + 0.02;
+    pos.set([p.x + lx, y, p.z + lz, p.x - lx, y, p.z - lz], i * 6);
     const c = segs[path.segment[i]].dir > 0 ? FORWARD_COLOUR : REVERSE_COLOUR;
     c.toArray(col, i * 6);
     c.toArray(col, i * 6 + 3);

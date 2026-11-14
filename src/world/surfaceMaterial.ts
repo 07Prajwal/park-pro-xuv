@@ -79,6 +79,9 @@ export function applyWorldUv(mat: THREE.Material, tileM: number, macro: number, 
           #ifdef USE_ALPHAMAP
             vAlphaMapUv = wuv;
           #endif
+          #ifdef USE_EMISSIVEMAP
+            vEmissiveMapUv = wuv;
+          #endif
         }`,
       );
     if (macro > 0) {

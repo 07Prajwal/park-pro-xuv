@@ -96,12 +96,26 @@ export class Menus {
 
   showTutorial(def: LevelDef, layout: LevelLayout, d: Difficulty): void {
     const facts: string[] = [];
+    const stops = layout.stops?.length ?? 0;
+    if (stops) facts.push(`${stops + 1} spaces, in order`);
     if (layout.target) {
       facts.push(`Space: ${layout.target.zone.w.toFixed(1)} × ${layout.target.zone.l.toFixed(1)} m`);
       facts.push(`Straight within ${layout.target.maxAngleDeg}°`);
       if (layout.target.kerb) facts.push(`Within ${(layout.target.kerb.maxGapM * 100).toFixed(0)} cm of the kerb`);
     }
+    const rules = layout.rules;
+    if (rules?.kerbTouchLimit !== undefined) {
+      const n = rules.kerbTouchLimit;
+      facts.push(`${n ? `${n} kerb touch${n > 1 ? 'es' : ''} allowed (−${rules.kerbPenalty ?? 5} each); one more fails the attempt` : 'Any kerb touch fails the attempt'}`);
+    }
+    if (rules?.bumpMaxKmh) facts.push(`Speed bumps below ${rules.bumpMaxKmh} km/h`);
+    if (rules?.rollbackM) facts.push(`No rolling back more than ${(rules.rollbackM * 100).toFixed(0)} cm`);
+    if (layout.gates?.length && layout.target) facts.push(`${layout.gates.length} checkpoints on the way`);
     if (layout.parTimeS > 0) facts.push(`Par time ${layout.parTimeS} s`);
+    const secureBoth = layout.target?.secure === 'both';
+    const finishNote = secureBoth
+      ? `Finish ${stops ? 'each space' : 'the space'} by stopping inside it, applying the parking brake <b>and</b> selecting P.`
+      : 'Finish by stopping inside the space and selecting P or applying the parking brake.';
     this.open(
       'tutorial',
       `<div class="panel">
@@ -110,7 +124,7 @@ export class Menus {
         <div class="legend"><span class="lg fwd">Forward</span><span class="lg rev">Reverse</span><span class="lg tgt">Target</span></div>
         <ol class="steps">${def.technique.map((t) => `<li>${t}</li>`).join('')}</ol>
         ${facts.length ? `<p class="facts">${facts.join(' · ')}</p>` : ''}
-        ${layout.target ? '<p class="note">Finish by stopping inside the space and selecting P or applying the parking brake.</p>' : ''}
+        ${layout.target ? `<p class="note">${finishNote}</p>` : ''}
         <div class="buttons">
           <button class="primary" data-act="begin">Start</button>
           ${layout.ideal ? '<button data-act="demo">Watch the ideal manoeuvre</button>' : ''}
@@ -127,6 +141,24 @@ export class Menus {
       .filter((b) => b.value !== 0)
       .map((b) => `<tr><td>${b.label}</td><td>${b.value}</td></tr>`)
       .join('');
+    if (r.failed) {
+      this.open(
+        'result',
+        `<div class="panel">
+          <h2><span class="tag">Level ${def.id} · attempt failed</span>${def.title}</h2>
+          <p class="score">${r.failed}</p>
+          <p class="facts">${r.timeS.toFixed(1)} s · not recorded</p>
+          <div class="buttons">
+            <button class="primary" data-act="retry">Retry</button>
+            ${hasIdeal ? '<button data-act="demo">Watch the ideal manoeuvre</button>' : ''}
+            <button data-act="levels">Levels</button>
+          </div>
+        </div>`,
+        () => this.actions.retry(),
+        null,
+      );
+      return;
+    }
     const v = r.verdict;
     const detail = v
       ? `Angle ${v.angleDeg.toFixed(1)}°${v.kerbGapM !== undefined ? ` · kerb gap ${Math.max(0, v.kerbGapM * 100).toFixed(0)} cm` : ` · off-centre ${(v.offsetM * 100).toFixed(0)} cm`}`

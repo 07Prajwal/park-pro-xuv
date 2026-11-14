@@ -25,6 +25,10 @@ export interface CarDimensions {
   wheelWidthM: number;
   /** Kerb-to-kerb turning radius, measured at the outer front wheel. */
   turningRadiusM: number;
+  /** Overall width across the door mirrors. */
+  mirrorSpanM: number;
+  /** Door mirrors: distance of their centre ahead of the middle of the car's length. */
+  mirrorAheadM: number;
 }
 
 /** Mahindra XUV 7XO AX7 (approximate real-world figures). */
@@ -41,6 +45,8 @@ export const XUV_7XO: CarDimensions = {
   wheelRadiusM: 0.376, // 245/55 R19
   wheelWidthM: 0.245,
   turningRadiusM: 5.4,
+  mirrorSpanM: 2.24,
+  mirrorAheadM: 0.78,
 };
 
 /** Hyundai Eon - used only as a comparison ghost/footprint. */
@@ -57,6 +63,8 @@ export const HYUNDAI_EON: CarDimensions = {
   wheelRadiusM: 0.28,
   wheelWidthM: 0.155,
   turningRadiusM: 4.6,
+  mirrorSpanM: 1.8,
+  mirrorAheadM: 0.5,
 };
 
 export const PHYSICS = {

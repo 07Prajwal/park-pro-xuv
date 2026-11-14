@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { XUV_7XO } from '../src/config';
-import { carFootprint, rectCorners } from '../src/levels/geometry';
+import { carFootprint, pointInRect, rectCorners } from '../src/levels/geometry';
 import { endPose, samplePath } from '../src/levels/idealPath';
 import { LEVELS } from '../src/levels/levels';
 import { evaluateParking } from '../src/levels/scoring';
 import { DIFFICULTIES } from '../src/levels/types';
 import { pathClearance } from '../src/levels/validate';
+import { Terrain } from '../src/world/terrain';
 
 const CAR = XUV_7XO;
 
@@ -20,7 +21,7 @@ describe('level ideal manoeuvres', () => {
         const verdict = evaluateParking(end, L.target!, CAR);
         expect(verdict.inside, 'footprint inside the zone').toBe(true);
         expect(verdict.angleDeg).toBeLessThanOrEqual(L.target!.maxAngleDeg);
-        expect(verdict.ok).toBe(true);
+        expect(verdict.reason ?? 'ok').toBe('ok');
         const clearance = pathClearance(L, segs, CAR);
         expect(clearance, 'clearance along the path (m)').toBeGreaterThanOrEqual(0.05);
       });
@@ -34,6 +35,33 @@ describe('level ideal manoeuvres', () => {
       expect(segs[segs.length - 1].dir).toBe(-1);
     }
   });
+
+  for (const d of DIFFICULTIES) {
+    it(`level 8 (${d}): the ideal path passes every gate in order, on the gate's floor`, () => {
+      const L = LEVELS[7].build(d);
+      const terrain = new Terrain(L.surfaces);
+      const path = samplePath(L.spawn, L.ideal!, CAR, 0.1).poses;
+      let gate = 0;
+      let y = 0;
+      for (const p of path) {
+        y = terrain.height(p.x, p.z, y);
+        const g = L.gates![gate];
+        if (g && pointInRect(p, g.rect) && Math.abs((g.rect.level ?? 0) - y) < 1.5) gate++;
+      }
+      expect(gate).toBe(L.gates!.length);
+      expect(y).toBeGreaterThan(2.5);
+    });
+
+    it(`level 12 (${d}): the ideal path stops in the uphill space before the downhill one`, () => {
+      const L = LEVELS[11].build(d);
+      const i = L.ideal!.findIndex((s) => s.stop);
+      expect(i).toBeGreaterThan(0);
+      const v = evaluateParking(endPose(L.spawn, L.ideal!.slice(0, i + 1), CAR), L.stops![0], CAR);
+      expect(v.reason ?? 'ok').toBe('ok');
+      expect(L.stops![0].secure).toBe('both');
+      expect(L.target!.secure).toBe('both');
+    });
+  }
 
   it('sampled path is continuous', () => {
     const L = LEVELS[5].build('normal');

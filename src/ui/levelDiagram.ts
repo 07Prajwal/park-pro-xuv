@@ -1,7 +1,8 @@
 /**
- * Top-down SVG diagram of a level, drawn from its layout: kerbs, bay lines,
- * parked cars, cones, the target space, the ideal manoeuvre (blue forward,
- * amber reverse) and the car at the start and end. Screen up is +Z; like the
+ * Top-down SVG diagram of a level, drawn from its layout: ramps and decks,
+ * footpaths, kerbs, walls, bay lines, speed bumps, parked cars and street
+ * vehicles, cones, the parking stops and target space, the ideal manoeuvre
+ * (blue forward, amber reverse) and the car at the start and end. Screen up is +Z; like the
  * in-game top-down view, +X (the car's left when heading +Z) is to the left.
  */
 
@@ -9,6 +10,7 @@ import type { CarDimensions } from '../config';
 import { carFootprint, rectCorners, type Vec2 } from '../levels/geometry';
 import { endPose, samplePath } from '../levels/idealPath';
 import type { LevelLayout, OrientedRect } from '../levels/types';
+import { STREET_VEHICLE_SIZE } from '../levels/validate';
 
 const W = 420;
 const H = 210;
@@ -19,6 +21,7 @@ export function levelDiagram(L: LevelLayout, d: CarDimensions): string {
   const addRect = (r: OrientedRect) => pts.push(...rectCorners(r).map((c) => ({ ...c })));
   addRect(carFootprint(L.spawn, d));
   if (L.target) addRect(L.target.zone);
+  for (const t of L.stops ?? []) addRect(t.zone);
   for (const c of L.parkedCars) addRect({ x: c.x, z: c.z, yaw: c.yaw, w: d.widthM * c.scale, l: d.lengthM * c.scale });
   for (const c of L.cones) pts.push(c);
   for (const g of L.gates ?? []) addRect(g.rect);
@@ -45,9 +48,21 @@ export function levelDiagram(L: LevelLayout, d: CarDimensions): string {
 
   const out: string[] = [];
   out.push(`<rect width="${W}" height="${H}" fill="#3b3d40"/>`);
+  for (const f of L.floors) out.push(poly(f.rect, `fill="${f.material === 'pavers' ? '#8a7f74' : '#55575a'}"`));
+  // Ramps and decks are see-through so the floor beneath a deck stays readable.
+  for (const sf of L.surfaces) {
+    if (sf.h0 === 0 && sf.h1 === 0) continue;
+    out.push(poly(sf.rect, `fill="rgba(200,200,205,${sf.h0 === sf.h1 ? 0.12 : 0.22})" stroke="#c8c8cd" stroke-width="1" stroke-dasharray="${sf.h0 === sf.h1 ? '0' : '3 3'}"`));
+  }
+  for (const pv of L.pavements) out.push(poly(pv, 'fill="#7d7973"'));
   for (const k of L.kerbs) out.push(poly(k, 'fill="#9a968e"'));
-  for (const b of L.blocks) out.push(poly(b.rect, 'fill="#6f6b66"'));
+  for (const b of L.blocks) if (b.material !== 'light') out.push(poly(b.rect, `fill="${b.material === 'brick' ? '#7a4a3a' : '#6f6b66'}"`));
   for (const l of L.lines) out.push(poly({ ...l, w: Math.max(l.w, 0.15), l: Math.max(l.l, 0.15) }, 'fill="#e9e7df" opacity="0.85"'));
+  for (const b of L.bumps) out.push(poly({ ...b, l: Math.max(b.l, 0.3) }, 'fill="#e3b51d" opacity="0.85"'));
+  (L.stops ?? []).forEach((t, i) => {
+    out.push(poly(t.zone, 'fill="rgba(61,220,132,0.1)" stroke="#3ddc84" stroke-width="1.5" stroke-dasharray="3 3"'));
+    out.push(`<text x="${sx(t.zone.x)}" y="${sy(t.zone.z)}" fill="#3ddc84" font-size="11" text-anchor="middle" dominant-baseline="middle">${i + 1}</text>`);
+  });
   if (L.target) out.push(poly(L.target.zone, 'fill="rgba(61,220,132,0.18)" stroke="#3ddc84" stroke-width="2" stroke-dasharray="6 4"'));
   (L.gates ?? []).forEach((g, i) => {
     out.push(poly(g.rect, 'fill="rgba(61,220,132,0.12)" stroke="#3ddc84" stroke-width="1.5"'));
@@ -56,6 +71,11 @@ export function levelDiagram(L: LevelLayout, d: CarDimensions): string {
   for (const c of L.parkedCars) {
     const hex = `#${c.colour.toString(16).padStart(6, '0')}`;
     out.push(poly({ x: c.x, z: c.z, yaw: c.yaw, w: d.widthM * c.scale, l: d.lengthM * c.scale }, `fill="${hex}" stroke="#111" stroke-width="1" opacity="0.9"`));
+  }
+  for (const v of L.vehicles) {
+    const sz = STREET_VEHICLE_SIZE[v.kind];
+    const hex = `#${v.colour.toString(16).padStart(6, '0')}`;
+    out.push(poly({ x: v.x, z: v.z, yaw: v.yaw, w: sz.w, l: sz.l }, `fill="${hex}" stroke="${v.kind === 'auto' ? '#e8b818' : '#111'}" stroke-width="1"`));
   }
   for (const c of L.cones) out.push(`<circle cx="${sx(c.x)}" cy="${sy(c.z)}" r="${Math.max(2, 0.2 * scale).toFixed(1)}" fill="#ff6a1a"/>`);
   if (path && L.ideal) {

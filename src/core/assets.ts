@@ -13,7 +13,7 @@ export interface PbrSet {
   orm: THREE.Texture;
 }
 
-export type SurfaceName = 'asphalt' | 'grass' | 'concrete';
+export type SurfaceName = 'asphalt' | 'grass' | 'concrete' | 'brick' | 'plaster' | 'pavers';
 
 export interface GameAssets {
   skyBackground: THREE.Texture;
@@ -23,7 +23,7 @@ export interface GameAssets {
   surfaces: Record<SurfaceName, PbrSet>;
 }
 
-const SURFACES: SurfaceName[] = ['asphalt', 'grass', 'concrete'];
+const SURFACES: SurfaceName[] = ['asphalt', 'grass', 'concrete', 'brick', 'plaster', 'pavers'];
 
 export async function loadAssets(anisotropy: number, onProgress: (fraction: number) => void): Promise<GameAssets> {
   const manager = new THREE.LoadingManager();

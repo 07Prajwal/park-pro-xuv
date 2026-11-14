@@ -103,6 +103,16 @@ function buildPrototype(): Part[] {
   return parts;
 }
 
+const X_AXIS = new THREE.Vector3(1, 0, 0);
+const pitchQ = new THREE.Quaternion();
+
+/** Heading, then nose up by the car's pitch (a negative rotation about its own +X). */
+export function parkedCarQuat(car: ParkedCar, out = new THREE.Quaternion()): THREE.Quaternion {
+  out.setFromAxisAngle(THREE.Object3D.DEFAULT_UP, car.yaw);
+  if (car.pitch) out.multiply(pitchQ.setFromAxisAngle(X_AXIS, -car.pitch));
+  return out;
+}
+
 export class ParkedCarInstances {
   readonly group = new THREE.Group();
 
@@ -113,12 +123,11 @@ export class ParkedCarInstances {
     const q = new THREE.Quaternion();
     const p = new THREE.Vector3();
     const s = new THREE.Vector3();
-    const up = new THREE.Vector3(0, 1, 0);
     const c = new THREE.Color();
     for (const part of prototype) {
       const mesh = new THREE.InstancedMesh(part.geometry, part.material, cars.length);
       cars.forEach((car, i) => {
-        mesh.setMatrixAt(i, m.compose(p.set(car.x, 0, car.z), q.setFromAxisAngle(up, car.yaw), s.setScalar(car.scale)));
+        mesh.setMatrixAt(i, m.compose(p.set(car.x, car.y ?? 0, car.z), parkedCarQuat(car, q), s.setScalar(car.scale)));
         if (part.tinted) mesh.setColorAt(i, c.setHex(car.colour));
       });
       mesh.castShadow = true;
