@@ -28,7 +28,8 @@ export type InputAction =
   | 'indicatorLeft'
   | 'indicatorRight'
   | 'hazards'
-  | 'lights';
+  | 'lights'
+  | 'mirrors';
 
 const ACTIONS: readonly InputAction[] = [
   'reset',
@@ -43,6 +44,7 @@ const ACTIONS: readonly InputAction[] = [
   'indicatorRight',
   'hazards',
   'lights',
+  'mirrors',
 ];
 
 export class InputState implements DriveInput {
@@ -52,6 +54,12 @@ export class InputState implements DriveInput {
   horn = false;
   /** Set on the first user gesture (needed to unlock audio on mobile). */
   hadUserGesture = false;
+  /** Camera picked directly (index into the camera list), or -1. Cleared by the consumer. */
+  selectCamera = -1;
+  /** Accumulated look / orbit drag (pixels) and zoom (wheel steps) since the camera last read them. */
+  lookX = 0;
+  lookY = 0;
+  zoom = 0;
 
   private readonly pending = Object.fromEntries(ACTIONS.map((a) => [a, 0])) as Record<InputAction, number>;
 

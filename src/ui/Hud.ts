@@ -6,6 +6,7 @@
  * bar uses a compositor-only transform.
  */
 
+import type { ScreenRect } from '../cameras/PipView';
 import { GEAR_ORDER, type Gear } from '../vehicle/Drivetrain';
 
 export interface HudData {
@@ -25,6 +26,7 @@ export interface HudData {
   /** Steering-wheel angle in degrees, positive = turned left. */
   steerDeg: number;
   fps: number;
+  cameraLabel: string;
   message: string;
   messageAge: number;
 }
@@ -56,9 +58,10 @@ export class Hud {
           <span class="hud-rpm"><span data-k="rpm">0</span> rpm</span>
         </div>
       </div>
-      <div class="hud-info"><div>Wheel <span data-k="steer">0°</span></div><div><span data-k="fps">--</span> FPS</div></div>
+      <div class="hud-info"><div data-k="camera"></div><div>Wheel <span data-k="steer">0°</span></div><div><span data-k="fps">--</span> FPS</div></div>
+      <div class="hud-pip-caption hidden" data-k="pipCaption">Check surroundings for safety</div>
       <div class="hud-message" data-k="message"></div>
-      <div class="hud-help">I engine · E/Q gear D↔P (hold brake) · W/S pedals (Shift = gentle) · A/D steer · Space park brake · B auto hold · , . / indicators · L lights · H horn · R reset · Esc pause</div>
+      <div class="hud-help">I engine · E/Q gear D↔P (hold brake) · W/S pedals (Shift = gentle) · A/D steer · Space park brake · B auto hold · , . / indicators · L lights · H horn · C / 1–7 camera · drag look · M mirrors · R reset · Esc pause</div>
       <div class="hud-pause hidden" data-k="pause">Paused<small>Press Esc to resume</small></div>`;
     for (const n of root.querySelectorAll<HTMLElement>('[data-k]')) this.el[n.dataset.k!] = n;
     this.gearEls = Object.fromEntries(
@@ -94,11 +97,26 @@ export class Hud {
     const deg = Math.round(Math.abs(d.steerDeg));
     this.text('steer', deg === 0 ? '0°' : `${deg}° ${d.steerDeg > 0 ? 'L' : 'R'}`);
     this.text('fps', Math.round(d.fps).toString());
+    this.text('camera', d.cameraLabel);
 
     let msg = d.messageAge < MESSAGE_S ? d.message : '';
     if (!msg && !d.engineRunning && !d.cranking) msg = 'Engine off — press I to start (in P or N)';
     this.text('message', msg);
     this.el.message.classList.toggle('show', msg !== '');
+  }
+
+  /** Show the safety caption under the reverse-camera view, or hide it (null). */
+  setReverseCaption(r: ScreenRect | null): void {
+    const el = this.el.pipCaption;
+    const key = r ? `${r.x},${r.y},${r.w},${r.h}` : '';
+    if (this.cache.get('pip') === key) return;
+    this.cache.set('pip', key);
+    el.classList.toggle('hidden', !r);
+    if (r) {
+      el.style.left = `${r.x}px`;
+      el.style.top = `${r.y + r.h - 26}px`;
+      el.style.width = `${r.w}px`;
+    }
   }
 
   setPaused(paused: boolean): void {

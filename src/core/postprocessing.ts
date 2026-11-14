@@ -34,7 +34,7 @@ export class PostProcessing {
       this.composer.addPass(this.gtao);
     }
     if (q.bloom) {
-      this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.25, 0.35, 3.5);
+      this.bloom = new UnrealBloomPass(new THREE.Vector2(size.x, size.y), 0.25, 0.35, 5);
       this.composer.addPass(this.bloom);
     }
     this.composer.addPass(new OutputPass());

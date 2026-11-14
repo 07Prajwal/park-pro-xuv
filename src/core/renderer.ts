@@ -34,6 +34,8 @@ export function createRenderer(canvas: HTMLCanvasElement, quality: QualityPreset
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, quality.pixelRatioCap));
   renderer.shadowMap.enabled = true;
   renderer.shadowMap.type = THREE.PCFShadowMap;
+  // The game flags one shadow update per frame so extra views (mirrors, reverse camera) reuse it.
+  renderer.shadowMap.autoUpdate = false;
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.95;
   return renderer;
@@ -97,6 +99,7 @@ export function createRenderContext(
   resize();
 
   function render(dt: number): void {
+    renderer.shadowMap.needsUpdate = true;
     if (post) post.render(dt);
     else renderer.render(scene, camera);
   }

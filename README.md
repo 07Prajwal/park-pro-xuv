@@ -2,7 +2,7 @@
 
 A browser-based 3D driving and parking trainer for the Mahindra XUV 7XO AX7 (diesel automatic), built with Vite, TypeScript, Three.js and Rapier. Runs fully client-side and deploys as a static site.
 
-> **Status: Stage 2 of 7** — diesel engine + torque-converter 6-speed automatic (P/R/N/D, creep, kickdown, lock-up), electronic parking brake and auto-hold, indicators and lights, procedural diesel engine sound, and a photographic look (HDRI sky lighting, PBR asphalt/grass/concrete, soft shadows, ambient occlusion, bloom on lamps). The detailed XUV exterior and camera system arrive in Stage 3.
+> **Status: Stage 3 of 7** — lofted XUV 7XO body with an open right-hand-drive cabin (dashboard, live digital cluster, turning steering wheel, three seat rows), XUV 7XO lamp signature with real headlight beams, and seven cameras including a mirrored reverse camera whose guidelines follow the steering, plus door-mirror views. Stage 2 delivered the diesel automatic drivetrain, EPB/auto-hold, engine sound and the photographic look (HDRI lighting, PBR textures, shadows, ambient occlusion, bloom).
 
 ## Run locally
 
@@ -41,11 +41,29 @@ The Vite `base` is `./`, so the site works from any `https://<user>.github.io/<r
 | Auto-hold on / off | `B` |
 | Left / right indicator, hazards | `,` / `.` , `/` |
 | Headlights | `L` |
+| Next camera / pick camera | `C` / `1`–`7` |
+| Look around (driver, bonnet) or orbit | drag with the mouse |
+| Zoom (top-down, 360°, orbit) | mouse wheel |
+| Door-mirror views on / off (driver and bonnet cameras) | `M` |
 | Horn | `H` |
 | Reset car | `R` |
 | Pause | `Esc` / `P` |
 
 Driving like the real car: the car starts in P with the EPB on. Press `I`, hold `S`, shift to D with `E` (×3) or R (×1), then release the brake — the car creeps. Pressing `W` releases the EPB automatically when the selector is in D or R. P and R refuse to engage while moving, and every shift out of P needs the brake held. Sound starts on your first key press or click (browser autoplay rule).
+
+## Cameras
+
+| Key | Camera |
+|---|---|
+| `1` | Chase |
+| `2` | Driver's seat (right-hand drive; the look springs back to the road after you let go) |
+| `3` | Bonnet |
+| `4` | Top-down parking view (turns with the car) |
+| `5` | Orbit |
+| `6` | Rear camera, full screen |
+| `7` | 360° overhead view (shows the guidelines while in R) |
+
+In R, the reverse camera also appears as a picture-in-picture view at the top of the screen. Like the real display it is mirrored, and the guidelines are the predicted path of the rear bumper corners for the current steering angle, with marks at 0.5 m (red), 1 m and 2 m. Door-mirror views are on by default at High quality.
 
 ## Graphics quality
 
@@ -70,11 +88,11 @@ src/
   config.ts            Vehicle dimensions + physics tuning (single place to tweak)
   main.ts              Boot + lazy-load of the game chunk
   core/                Game loop, renderer, post-processing, quality presets, asset loading, Rapier bootstrap
-  vehicle/             VehiclePhysics (Rapier raycast vehicle), Drivetrain (engine/converter/gearbox), steering, lights, body + wheel geometry
+  vehicle/             VehiclePhysics (Rapier raycast vehicle), Drivetrain, steering, lights, lofted body, exterior details, cabin, wheels
   audio/               Procedural diesel engine (AudioWorklet), horn, indicator tick, reverse beep
   world/               Practice ground, world-space PBR surface material
-  cameras/             Chase camera
-  input/               InputState (device-agnostic) + keyboard source
+  cameras/             Camera rig (7 modes), picture-in-picture views (reverse camera, mirrors), reverse guidelines
+  input/               InputState (device-agnostic) + keyboard and mouse sources
   ui/                  HUD
 tests/                 Headless physics tests
 ```

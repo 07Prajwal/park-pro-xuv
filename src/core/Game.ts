@@ -1,5 +1,5 @@
 /**
- * Top-level game: loads assets, wires physics, rendering, input, audio, camera
+ * Top-level game: loads assets, wires physics, rendering, input, audio, cameras
  * and HUD together and runs the main loop.
  *
  * Loop model: physics advances in fixed 1/60 s steps (accumulator); rendering
@@ -9,13 +9,16 @@
 
 import { PAINT_COLOURS, PHYSICS, XUV_7XO, XUV_DRIVETRAIN, XUV_TUNING } from '../config';
 import { AudioEngine } from '../audio/AudioEngine';
-import { ChaseCamera } from '../cameras/ChaseCamera';
+import { CAMERA_MODES, CameraRig } from '../cameras/CameraRig';
+import { PipOverlay, PipView, type ScreenRect } from '../cameras/PipView';
+import { GUIDE_LAYER } from '../cameras/reverseGuidelines';
 import { InputState } from '../input/InputState';
 import { KeyboardInput } from '../input/KeyboardInput';
+import { PointerInput } from '../input/PointerInput';
 import { Hud } from '../ui/Hud';
 import { VehicleLights } from '../vehicle/VehicleLights';
 import { VehiclePhysics, type Spawn } from '../vehicle/VehiclePhysics';
-import { VehicleVisual } from '../vehicle/VehicleVisual';
+import { STEERING_WHEEL_LOCK_RAD, VehicleVisual } from '../vehicle/VehicleVisual';
 import { buildPracticeGround } from '../world/practiceGround';
 import { loadAssets } from './assets';
 import { createPhysics, type PhysicsContext } from './physics';
@@ -23,17 +26,21 @@ import { pickQuality } from './quality';
 import { createRenderContext, createRenderer, type RenderContext } from './renderer';
 
 const SPAWN: Spawn = { x: 0, z: -55, yaw: 0 };
-/** Steering-wheel turns from centre to lock (≈ 1.5 turns, i.e. ~3 lock-to-lock). */
-const STEERING_WHEEL_LOCK_DEG = 540;
+const RAD_TO_DEG = 180 / Math.PI;
 
 export class Game {
   private readonly input = new InputState();
   private readonly keyboard: KeyboardInput;
   private readonly hud: Hud;
-  private readonly chase: ChaseCamera;
+  private readonly rig: CameraRig;
   private readonly car: VehiclePhysics;
   private readonly lights = new VehicleLights();
   private readonly carVisual: VehicleVisual;
+  private readonly overlay = new PipOverlay();
+  private readonly rearPip: PipView;
+  /** [right mirror (driver's side), left mirror]. */
+  private readonly mirrorPips: PipView[];
+  private mirrorsEnabled: boolean;
   private audio: AudioEngine | null = null;
   private audioStarting = false;
 
@@ -44,6 +51,9 @@ export class Game {
   private fpsFrames = 0;
   private fpsTime = 0;
   private lastSelector = 'P';
+  private rearFull = false;
+  private readonly rearRect: ScreenRect = { x: 0, y: 0, w: 1, h: 1 };
+  private readonly fullRect: ScreenRect = { x: 0, y: 0, w: 1, h: 1 };
 
   private constructor(
     private readonly phys: PhysicsContext,
@@ -57,17 +67,41 @@ export class Game {
     const paintIdx = Number(new URLSearchParams(location.search).get('paint') ?? 0);
     this.carVisual = new VehicleVisual(this.car, this.lights, PAINT_COLOURS[paintIdx] ?? PAINT_COLOURS[0]);
     gfx.scene.add(this.carVisual.root);
+    const root = this.carVisual.root;
 
-    this.chase = new ChaseCamera(gfx.camera);
+    this.rig = new CameraRig(gfx.camera, this.carVisual);
+
+    // Reverse camera on the tailgate: wide angle, tilted down, mirrored like the real display.
+    this.rearPip = new PipView(72, true, this.overlay);
+    this.rearPip.camera.layers.enable(GUIDE_LAYER);
+    this.rearPip.camera.position.copy(this.carVisual.rearCameraMount);
+    this.rearPip.camera.rotation.set(-0.55, 0, 0, 'YXZ');
+    root.add(this.rearPip.camera);
+
+    // Door mirrors: look back and slightly outward; mirrored image.
+    this.mirrorPips = this.carVisual.mirrorMounts.map((m) => {
+      const pip = new PipView(22, true, this.overlay);
+      const side = Math.sign(m.x);
+      pip.camera.position.copy(m);
+      pip.camera.rotation.set(-0.06, -side * 0.24, 0, 'YXZ');
+      root.add(pip.camera);
+      return pip;
+    });
+    this.mirrorsEnabled = gfx.quality.level === 'high';
+
     this.keyboard = new KeyboardInput(this.input, XUV_TUNING.pedals);
+    new PointerInput(this.input, gfx.renderer.domElement);
     this.hud = new Hud(hudRoot);
 
-    window.addEventListener('resize', gfx.resize);
-    window.addEventListener('pointerdown', () => (this.input.hadUserGesture = true));
+    window.addEventListener('resize', () => {
+      gfx.resize();
+      this.layout();
+    });
     // Don't simulate a huge catch-up step after the tab was hidden.
     document.addEventListener('visibilitychange', () => {
       this.lastTime = -1;
     });
+    this.layout();
   }
 
   static async create(canvas: HTMLCanvasElement, hudRoot: HTMLElement, onProgress: (f: number) => void): Promise<Game> {
@@ -83,6 +117,30 @@ export class Game {
 
   start(): void {
     this.gfx.renderer.setAnimationLoop(this.frame);
+  }
+
+  /** Screen placement of the picture-in-picture views (CSS pixels). */
+  private layout(): void {
+    const W = window.innerWidth;
+    const H = window.innerHeight;
+    this.overlay.resize(W, H);
+    const pr = this.gfx.renderer.getPixelRatio();
+
+    const rw = Math.round(Math.min(520, W * 0.42));
+    this.rearRect.w = rw;
+    this.rearRect.h = Math.round((rw * 9) / 16);
+    this.rearRect.x = Math.round((W - rw) / 2);
+    this.rearRect.y = 64;
+    this.fullRect.w = W;
+    this.fullRect.h = H;
+    this.rearPip.setRect(this.rearFull ? this.fullRect : this.rearRect, pr, this.rearFull ? 0 : 3);
+
+    const mw = Math.round(Math.min(300, W * 0.22));
+    const mh = Math.round(mw * 0.5);
+    for (const pip of this.mirrorPips) {
+      const right = pip.camera.position.x < 0; // driver's (right-hand) mirror goes on the right of the screen
+      pip.setRect({ x: right ? W - mw - 16 : 16, y: 96, w: mw, h: mh }, pr);
+    }
   }
 
   private readonly frame = (timeMs: number): void => {
@@ -110,10 +168,33 @@ export class Game {
     }
 
     const alpha = this.accumulator / PHYSICS.fixedDt;
-    this.carVisual.update(alpha);
-    this.chase.update(this.carVisual.root, dt);
-    this.gfx.followShadow(this.carVisual.root.position.x, this.carVisual.root.position.z);
-    this.gfx.render(dt);
+    const root = this.carVisual.root;
+    this.carVisual.update(alpha, dt);
+    root.updateMatrixWorld();
+
+    const reversing = this.car.drivetrain.selector === 'R';
+    this.rig.showGuides = reversing;
+    this.rig.update(this.input, dt);
+    this.gfx.followShadow(root.position.x, root.position.z);
+
+    // Views: full-screen rear camera replaces the main view; otherwise main view plus PiPs.
+    const rearFull = this.rig.mode === 'rear';
+    if (rearFull !== this.rearFull) {
+      this.rearFull = rearFull;
+      this.layout();
+    }
+    const inCabin = this.rig.mode === 'driver' || this.rig.mode === 'bonnet';
+    this.rearPip.visible = rearFull || (reversing && this.rig.mode !== 'surround' && this.rig.mode !== 'topdown');
+    for (const pip of this.mirrorPips) pip.visible = this.mirrorsEnabled && inCabin;
+    if (this.rearPip.visible || this.rig.showGuides) this.carVisual.guidelines.update(this.car.centreSteerAngle);
+
+    const renderer = this.gfx.renderer;
+    if (rearFull) renderer.shadowMap.needsUpdate = true;
+    else this.gfx.render(dt);
+    this.rearPip.render(renderer, this.gfx.scene);
+    for (const pip of this.mirrorPips) pip.render(renderer, this.gfx.scene);
+    if (this.rearPip.visible || (this.mirrorsEnabled && inCabin)) this.overlay.render(renderer);
+    this.hud.setReverseCaption(this.rearPip.visible ? this.rearPip.rect : null);
 
     this.updateAudio(dt);
     this.updateFps(dt);
@@ -133,8 +214,9 @@ export class Game {
         leftLit: this.lights.leftLit,
         rightLit: this.lights.rightLit,
         headlights: this.lights.headlights,
-        steerDeg: this.car.steerPosition * STEERING_WHEEL_LOCK_DEG,
+        steerDeg: this.car.steerPosition * STEERING_WHEEL_LOCK_RAD * RAD_TO_DEG,
         fps: this.fps,
+        cameraLabel: this.rig.label,
         message: this.car.message,
         messageAge: this.car.messageAge,
       },
@@ -150,7 +232,7 @@ export class Game {
     }
     if (i.consume('reset')) {
       this.car.reset();
-      this.chase.snap();
+      this.rig.snap();
       this.accumulator = 0;
     }
     if (i.consume('selectorUp')) this.car.shiftSelector(-1);
@@ -162,7 +244,13 @@ export class Game {
     if (i.consume('indicatorRight')) this.lights.toggleRight();
     if (i.consume('hazards')) this.lights.toggleHazards();
     if (i.consume('lights')) this.lights.headlights = !this.lights.headlights;
-    i.consume('camera'); // Camera switching arrives in Stage 3.
+    if (i.consume('mirrors')) this.mirrorsEnabled = !this.mirrorsEnabled;
+    if (i.consume('camera')) this.rig.next();
+    if (i.selectCamera >= 0) {
+      const m = CAMERA_MODES[i.selectCamera];
+      if (m) this.rig.setMode(m.id);
+      i.selectCamera = -1;
+    }
   }
 
   /** Audio can only start after a user gesture (browser autoplay rules). */

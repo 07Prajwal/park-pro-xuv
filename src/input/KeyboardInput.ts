@@ -32,6 +32,7 @@ const ACTION_KEYS: Record<string, InputAction> = {
   Period: 'indicatorRight',
   Slash: 'hazards',
   KeyL: 'lights',
+  KeyM: 'mirrors',
 };
 
 const PREVENT_DEFAULT = new Set([...FORWARD, ...BACK, ...LEFT, ...RIGHT, 'Space', 'Slash']);
@@ -73,6 +74,10 @@ export class KeyboardInput {
     this.down.add(e.code);
     const action = ACTION_KEYS[e.code];
     if (action) this.state.trigger(action);
+    else if (e.code.startsWith('Digit')) {
+      const n = Number(e.code.slice(5));
+      if (n >= 1 && n <= 9) this.state.selectCamera = n - 1;
+    }
   };
 
   private readonly onUp = (e: KeyboardEvent): void => {
