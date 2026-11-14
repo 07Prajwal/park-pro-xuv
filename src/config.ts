@@ -9,6 +9,8 @@
  *   The vehicle body origin sits on the ground plane, midway between the axles.
  */
 
+import type { DrivetrainConfig } from './vehicle/Drivetrain';
+
 export interface CarDimensions {
   name: string;
   lengthM: number;
@@ -100,12 +102,6 @@ export interface VehicleTuning {
   };
 
   drive: {
-    /** Peak tractive force at the wheels (traction/torque limited), N. */
-    maxTractiveForceN: number;
-    /** Wheel power used for the constant-power region above low speed, W. */
-    wheelPowerW: number;
-    maxReverseForceN: number;
-    maxReverseSpeedKmh: number;
     /** Fraction of tractive force sent to the front axle (XUV 7XO AX7 diesel AT = FWD). */
     frontDriveBias: number;
   };
@@ -114,9 +110,25 @@ export interface VehicleTuning {
     /** Total max service-brake force across all wheels, N. */
     maxBrakeForceN: number;
     frontBias: number;
-    /** Rear-axle handbrake force, N. */
-    handbrakeForceN: number;
+    /** Rear-axle electronic parking brake force, N. */
+    parkingBrakeForceN: number;
+    /** Park-pawl holding force on the driven axle, N. */
+    parkPawlForceN: number;
   };
+
+  pedals: {
+    /** Seconds for a held key to take the pedal from 0 to 1 (keyboard only). */
+    throttleRiseS: number;
+    throttleFallS: number;
+    brakeRiseS: number;
+    brakeFallS: number;
+    /** Pedal cap while the fine-control modifier (Shift) is held. */
+    fineThrottleCap: number;
+    fineBrakeCap: number;
+  };
+
+  /** Faster, lighter steering for casual play. */
+  steeringAssist: boolean;
 
   resistance: {
     /** 0.5 * rho * Cd * A (kg/m). */
@@ -156,18 +168,26 @@ export const XUV_TUNING: VehicleTuning = {
   },
 
   drive: {
-    maxTractiveForceN: 7200,
-    wheelPowerW: 115000,
-    maxReverseForceN: 4200,
-    maxReverseSpeedKmh: 18,
     frontDriveBias: 1.0,
   },
 
   brakes: {
     maxBrakeForceN: 17500,
     frontBias: 0.65,
-    handbrakeForceN: 6000,
+    parkingBrakeForceN: 9000,
+    parkPawlForceN: 30000,
   },
+
+  pedals: {
+    throttleRiseS: 0.45,
+    throttleFallS: 0.2,
+    brakeRiseS: 0.55,
+    brakeFallS: 0.15,
+    fineThrottleCap: 0.3,
+    fineBrakeCap: 0.35,
+  },
+
+  steeringAssist: false,
 
   resistance: {
     aeroDragCoeff: 0.5 * 1.2 * 0.38 * 2.75,
@@ -177,13 +197,74 @@ export const XUV_TUNING: VehicleTuning = {
   stoppedSpeedMs: 0.15,
 };
 
+/**
+ * 2.2 L mHawk diesel (approx. 185 PS / 450 Nm) with a 6-speed torque-converter automatic.
+ * Ratios and curve are approximate; tune here.
+ */
+export const XUV_DRIVETRAIN: DrivetrainConfig = {
+  idleRpm: 750,
+  revLimitRpm: 4600,
+  torqueCurve: [
+    [600, 150],
+    [1000, 260],
+    [1500, 400],
+    [1750, 450],
+    [2800, 450],
+    [3500, 380],
+    [4000, 330],
+    [4600, 260],
+  ],
+  engineInertia: 0.25,
+  frictionBaseNm: 14,
+  frictionPerRpmNm: 0.006,
+  idleGovernorGainNmPerRpm: 0.35,
+  idleGovernorMaxNm: 70,
+
+  converterCapacity: 450 / (2350 * 2350), // stalls at ~2350 rpm under full load
+  stallTorqueRatio: 1.85,
+  couplingSpeedRatio: 0.86,
+  lockupMinGear: 3,
+  lockupMinSpeedKmh: 45,
+
+  gearRatios: [4.459, 2.508, 1.556, 1.142, 0.851, 0.672],
+  reverseRatio: 3.185,
+  finalDrive: 3.3,
+  driveEfficiency: 0.9,
+  shiftTimeS: 0.35,
+  minTimeBetweenShiftsS: 0.9,
+  upshiftRpm: [1500, 3900],
+  downshiftRpm: [1050, 2500],
+
+  starterCrankS: 0.85,
+  parkShiftMaxKmh: 1.5,
+  reverseShiftMaxKmh: 3,
+};
+
+export interface PaintColour {
+  name: string;
+  hex: number;
+  metalness: number;
+  roughness: number;
+}
+
+export const PAINT_COLOURS: readonly PaintColour[] = [
+  { name: 'Everest White', hex: 0xdcddd9, metalness: 0.05, roughness: 0.3 },
+  { name: 'Napoli Black', hex: 0x08090b, metalness: 0.5, roughness: 0.32 },
+  { name: 'Dazzling Silver', hex: 0xb8bbbe, metalness: 0.85, roughness: 0.32 },
+  { name: 'Red Rage', hex: 0x8e0b12, metalness: 0.45, roughness: 0.3 },
+  { name: 'Deep Forest', hex: 0x1d3328, metalness: 0.55, roughness: 0.32 },
+  { name: 'Electric Blue', hex: 0x173a7a, metalness: 0.6, roughness: 0.3 },
+];
+
 export const RENDER = {
-  maxPixelRatio: 2,
-  shadowMapSize: 2048,
   /** Half-size of the shadow camera frustum that follows the car (m). */
-  shadowRadiusM: 30,
-  fogNear: 120,
-  fogFar: 380,
+  shadowRadiusM: 28,
+  /** Fog roughly matched to the HDRI horizon haze. */
+  fogColour: 0xc4d0de,
+  fogNear: 140,
+  fogFar: 1100,
+  cameraFar: 2500,
+  groundHalfM: 1500,
 } as const;
 
 export const MS_TO_KMH = 3.6;

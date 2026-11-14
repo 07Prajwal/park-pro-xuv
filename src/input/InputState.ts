@@ -1,27 +1,59 @@
 /**
  * Device-agnostic driver input. Keyboard (and later touch / gamepad) sources write
- * into one shared instance; the game reads it once per physics step.
+ * into one shared instance; the game reads it once per frame.
+ *
+ * Pedal values are final pedal positions: digital sources (keys) ramp them so a
+ * held key presses the pedal progressively, like a real foot.
  */
 export interface DriveInput {
-  /** Accelerator key/pedal, 0..1. */
+  /** Accelerator pedal, 0..1. */
   forward: number;
-  /** Brake / reverse key/pedal, 0..1. */
+  /** Brake pedal, 0..1. */
   back: number;
   /** Target steering, -1 (full right) .. +1 (full left). */
   steer: number;
-  handbrake: boolean;
+  horn: boolean;
 }
 
 /** One-shot actions; sources increment a counter and the game consumes it. */
-export type InputAction = 'reset' | 'camera' | 'pause';
+export type InputAction =
+  | 'reset'
+  | 'camera'
+  | 'pause'
+  | 'selectorUp' // towards P
+  | 'selectorDown' // towards D
+  | 'parkingBrake'
+  | 'autoHold'
+  | 'ignition'
+  | 'indicatorLeft'
+  | 'indicatorRight'
+  | 'hazards'
+  | 'lights';
+
+const ACTIONS: readonly InputAction[] = [
+  'reset',
+  'camera',
+  'pause',
+  'selectorUp',
+  'selectorDown',
+  'parkingBrake',
+  'autoHold',
+  'ignition',
+  'indicatorLeft',
+  'indicatorRight',
+  'hazards',
+  'lights',
+];
 
 export class InputState implements DriveInput {
   forward = 0;
   back = 0;
   steer = 0;
-  handbrake = false;
+  horn = false;
+  /** Set on the first user gesture (needed to unlock audio on mobile). */
+  hadUserGesture = false;
 
-  private readonly pending: Record<InputAction, number> = { reset: 0, camera: 0, pause: 0 };
+  private readonly pending = Object.fromEntries(ACTIONS.map((a) => [a, 0])) as Record<InputAction, number>;
 
   trigger(action: InputAction): void {
     this.pending[action]++;

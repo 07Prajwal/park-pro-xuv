@@ -1,10 +1,13 @@
 /**
- * Stage-1 placeholder visual for the XUV: correctly sized blocky body, wheels
- * that steer, spin and follow suspension travel, and brake/reverse lamps.
- * Replaced by the detailed XUV 7XO model in Stage 3.
+ * Renders the XUV from interpolated physics snapshots: smooth bevelled body,
+ * wheels that steer, spin and follow suspension travel, and working lamps
+ * (DRL, headlamps, tail/brake, reverse, indicators/hazards).
  */
 
 import * as THREE from 'three';
+import type { PaintColour } from '../config';
+import { buildCarBody, buildWheel, type CarLampMaterials } from './carGeometry';
+import type { VehicleLights } from './VehicleLights';
 import { WHEEL_COUNT, type VehiclePhysics } from './VehiclePhysics';
 
 export class VehicleVisual {
@@ -12,77 +15,37 @@ export class VehicleVisual {
 
   private readonly wheelPivots: THREE.Group[] = [];
   private readonly wheelSpins: THREE.Group[] = [];
-  private readonly brakeMat: THREE.MeshStandardMaterial;
-  private readonly reverseMat: THREE.MeshStandardMaterial;
+  private readonly lamps: CarLampMaterials;
+  private readonly paint: THREE.MeshPhysicalMaterial;
   private readonly tmpQ0 = new THREE.Quaternion();
   private readonly tmpQ1 = new THREE.Quaternion();
 
-  constructor(private readonly physics: VehiclePhysics, bodyColour = 0xf2f2ee) {
+  constructor(
+    private readonly physics: VehiclePhysics,
+    private readonly lights: VehicleLights,
+    paint: PaintColour,
+  ) {
     const d = physics.dim;
     const rearOverhang = d.lengthM - d.wheelbaseM - d.frontOverhangM;
-    const centreZ = (d.frontOverhangM - rearOverhang) / 2;
+    const body = buildCarBody(d, paint);
+    body.group.position.z = (d.frontOverhangM - rearOverhang) / 2;
+    this.root.add(body.group);
+    this.lamps = body.lamps;
+    this.paint = body.paint;
 
-    const paint = new THREE.MeshStandardMaterial({ color: bodyColour, metalness: 0.4, roughness: 0.35 });
-    const cladding = new THREE.MeshStandardMaterial({ color: 0x1b1b1d, roughness: 0.8 });
-    const glass = new THREE.MeshStandardMaterial({ color: 0x1a2430, metalness: 0.2, roughness: 0.1 });
-    const drl = new THREE.MeshStandardMaterial({ color: 0xffffff, emissive: 0xeaf4ff, emissiveIntensity: 1.5 });
-    this.brakeMat = new THREE.MeshStandardMaterial({ color: 0x550000, emissive: 0xff1010, emissiveIntensity: 0.25 });
-    this.reverseMat = new THREE.MeshStandardMaterial({ color: 0x777777, emissive: 0xffffff, emissiveIntensity: 0 });
-
-    const body = new THREE.Group();
-    body.position.z = centreZ;
-    this.root.add(body);
-
-    const add = (geo: THREE.BufferGeometry, mat: THREE.Material, x: number, y: number, z: number) => {
-      const m = new THREE.Mesh(geo, mat);
-      m.position.set(x, y, z);
-      m.castShadow = true;
-      m.receiveShadow = true;
-      body.add(m);
-      return m;
-    };
-
-    const w = d.widthM;
-    const L = d.lengthM;
-    const gc = d.groundClearanceM;
-    const beltY = 1.05;
-    // Lower black cladding, painted main body, glasshouse and roof.
-    add(new THREE.BoxGeometry(w, 0.32, L), cladding, 0, gc + 0.16, 0);
-    add(new THREE.BoxGeometry(w - 0.02, beltY - gc - 0.32, L - 0.04), paint, 0, (gc + 0.32 + beltY) / 2, 0);
-    const cabinLen = L * 0.62;
-    const cabinH = d.heightM - beltY - 0.05;
-    add(new THREE.BoxGeometry(w - 0.14, cabinH, cabinLen), glass, 0, beltY + cabinH / 2, -0.12);
-    add(new THREE.BoxGeometry(w - 0.16, 0.05, cabinLen - 0.1), paint, 0, d.heightM - 0.025, -0.12);
-    // Roof rails.
-    for (const sx of [-1, 1]) add(new THREE.BoxGeometry(0.04, 0.05, cabinLen * 0.85), cladding, sx * (w / 2 - 0.12), d.heightM + 0.02, -0.12);
-    // Front connected DRL bar and rear tail bar.
-    add(new THREE.BoxGeometry(w * 0.9, 0.04, 0.02), drl, 0, beltY - 0.12, L / 2 + 0.005);
-    add(new THREE.BoxGeometry(w * 0.92, 0.06, 0.02), this.brakeMat, 0, beltY - 0.06, -L / 2 - 0.005);
-    for (const sx of [-1, 1]) add(new THREE.BoxGeometry(0.18, 0.06, 0.02), this.reverseMat, sx * 0.55, 0.62, -L / 2 - 0.005);
-
-    // Wheels.
-    const r = d.wheelRadiusM;
-    const tyreGeo = new THREE.CylinderGeometry(r, r, d.wheelWidthM, 24);
-    tyreGeo.rotateZ(Math.PI / 2);
-    const rimGeo = new THREE.BoxGeometry(d.wheelWidthM + 0.01, r * 1.3, 0.07);
-    const tyreMat = new THREE.MeshStandardMaterial({ color: 0x151515, roughness: 0.9 });
-    const rimMat = new THREE.MeshStandardMaterial({ color: 0xb8bcc2, metalness: 0.8, roughness: 0.3 });
     for (let i = 0; i < WHEEL_COUNT; i++) {
-      const pivot = new THREE.Group();
-      const spin = new THREE.Group();
-      const tyre = new THREE.Mesh(tyreGeo, tyreMat);
-      tyre.castShadow = true;
-      spin.add(tyre);
-      // Two crossed spokes make rotation visible.
-      const s1 = new THREE.Mesh(rimGeo, rimMat);
-      const s2 = new THREE.Mesh(rimGeo, rimMat);
-      s2.rotation.x = Math.PI / 2;
-      spin.add(s1, s2);
-      pivot.add(spin);
+      const isLeft = physics.wheelConnections[i].x > 0;
+      const { pivot, spin } = buildWheel(d, isLeft ? 1 : -1);
       this.root.add(pivot);
       this.wheelPivots.push(pivot);
       this.wheelSpins.push(spin);
     }
+  }
+
+  setPaint(p: PaintColour): void {
+    this.paint.color.setHex(p.hex);
+    this.paint.metalness = p.metalness;
+    this.paint.roughness = p.roughness;
   }
 
   /** Interpolate between the previous and current physics snapshots. */
@@ -106,7 +69,20 @@ export class VehicleVisual {
       this.wheelSpins[i].rotation.x = prev.spin[i] + (curr.spin[i] - prev.spin[i]) * alpha;
     }
 
-    this.brakeMat.emissiveIntensity = this.physics.braking > 0.05 ? 2.5 : 0.25;
-    this.reverseMat.emissiveIntensity = this.physics.gear === 'R' ? 2.0 : 0;
+    this.updateLamps();
+  }
+
+  private updateLamps(): void {
+    const p = this.physics;
+    const l = this.lights;
+    const running = p.drivetrain.engineRunning;
+    const m = this.lamps;
+    m.drl.emissiveIntensity = running ? (l.headlights ? 2 : 5) : 0;
+    m.headlamp.emissiveIntensity = l.headlights ? 9 : 0;
+    m.tail.emissiveIntensity = l.headlights || running ? 1.6 : 0;
+    m.brake.emissiveIntensity = p.brakeLamps ? 9 : l.headlights ? 1.6 : 0;
+    m.reverse.emissiveIntensity = p.drivetrain.selector === 'R' ? 7 : 0;
+    m.indicatorLeft.emissiveIntensity = l.leftLit ? 9 : 0;
+    m.indicatorRight.emissiveIntensity = l.rightLit ? 9 : 0;
   }
 }

@@ -6,7 +6,7 @@ export default defineConfig({
   build: {
     target: 'es2022',
     // rapier3d-compat inlines its WASM as base64 (~4.3 MB, ~1.6 MB gzip) in the lazily loaded game chunk.
-    chunkSizeWarningLimit: 5000,
+    chunkSizeWarningLimit: 6000,
   },
   test: {
     environment: 'node',

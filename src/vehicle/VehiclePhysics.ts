@@ -1,9 +1,10 @@
 /**
  * Rapier raycast-vehicle wrapper for the XUV.
  *
- * Owns the chassis rigid body and the vehicle controller, converts driver input
- * into steering / engine / brake commands every fixed step, and records the
- * previous and current state so the renderer can interpolate between steps.
+ * Owns the chassis rigid body and the vehicle controller, converts pedals and
+ * steering into wheel commands every fixed step (via the Drivetrain), handles
+ * the parking brake, auto-hold and park pawl, and records the previous and
+ * current state so the renderer can interpolate between steps.
  *
  * This module is renderer-agnostic (no Three.js) so it can be unit-tested in Node.
  */
@@ -12,11 +13,10 @@ import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { CarDimensions, VehicleTuning } from '../config';
 import { MS_TO_KMH, PHYSICS } from '../config';
 import type { DriveInput } from '../input/InputState';
+import { Drivetrain, type DrivetrainConfig, type ShiftResult } from './Drivetrain';
 import { ackermannAngles, maxCentreSteerAngle, speedLockFactor, type WheelAngles } from './steering';
 
 type Rapier = typeof RAPIER_NS;
-
-export type SimpleGear = 'D' | 'R';
 
 export interface Spawn {
   x: number;
@@ -62,6 +62,7 @@ function makeSnapshot(): VehicleSnapshot {
 export class VehiclePhysics {
   readonly body: RAPIER_NS.RigidBody;
   readonly controller: RAPIER_NS.DynamicRayCastVehicleController;
+  readonly drivetrain: Drivetrain;
   readonly wheelConnections: Vec3Like[] = [];
 
   prev = makeSnapshot();
@@ -69,16 +70,23 @@ export class VehiclePhysics {
 
   /** Smoothed steering position, -1..1 (+ = left). */
   steerPosition = 0;
-  gear: SimpleGear = 'D';
   /** Signed forward speed, m/s. */
   speedMs = 0;
   throttle = 0;
   braking = 0;
+  /** Electronic parking brake applied. */
+  parkingBrake = true;
+  autoHoldEnabled = false;
+  /** Auto-hold is currently holding the car. */
+  autoHoldActive = false;
+
+  /** Latest driver-facing message (e.g. refused shift) and its age. */
+  message = '';
+  messageAge = 0;
 
   private readonly maxCentreSteer: number;
   private readonly angles: WheelAngles = { left: 0, right: 0 };
   private readonly scratch: Vec3Like = { x: 0, y: 0, z: 0 };
-  private gearHoldTimer = 0;
   private spawn: Spawn;
 
   constructor(
@@ -86,20 +94,21 @@ export class VehiclePhysics {
     private readonly world: RAPIER_NS.World,
     readonly dim: CarDimensions,
     readonly tuning: VehicleTuning,
+    drivetrainCfg: DrivetrainConfig,
     spawn: Spawn,
   ) {
     this.spawn = { ...spawn };
     this.maxCentreSteer = maxCentreSteerAngle(dim);
+    this.drivetrain = new Drivetrain(drivetrainCfg, dim.wheelRadiusM);
 
     const rearOverhang = dim.lengthM - dim.wheelbaseM - dim.frontOverhangM;
     const boxHalfH = (dim.heightM - dim.groundClearanceM) / 2;
     const boxCentreY = dim.groundClearanceM + boxHalfH;
     const boxCentreZ = (dim.frontOverhangM - rearOverhang) / 2;
 
-    const settleY = 0.05;
     this.body = world.createRigidBody(
       R.RigidBodyDesc.dynamic()
-        .setTranslation(spawn.x, settleY, spawn.z)
+        .setTranslation(spawn.x, 0.05, spawn.z)
         .setRotation(yawQuat(spawn.yaw))
         .setCanSleep(false)
         .setCcdEnabled(true)
@@ -162,16 +171,68 @@ export class VehiclePhysics {
     return this.speedMs * MS_TO_KMH;
   }
 
+  get stopped(): boolean {
+    return Math.abs(this.speedMs) < this.tuning.stoppedSpeedMs;
+  }
+
   /** Current centre (bicycle-model) steer angle in radians. */
   get centreSteerAngle(): number {
     return this.steerPosition * this.maxCentreSteer * speedLockFactor(this.speedKmh, this.tuning.steering);
   }
 
+  /** Brake lamps are lit by the pedal or by auto-hold. */
+  get brakeLamps(): boolean {
+    return this.braking > 0.05 || this.autoHoldActive;
+  }
+
+  // --- Driver controls -------------------------------------------------------
+
+  /** Move the selector one step: -1 towards P, +1 towards D. */
+  shiftSelector(dir: -1 | 1): ShiftResult {
+    const r = this.drivetrain.stepSelector(dir, this.braking > 0.1, this.speedKmh);
+    if (!r.ok && r.reason) this.notify(r.reason);
+    return r;
+  }
+
+  toggleIgnition(): void {
+    const dt = this.drivetrain;
+    if (dt.engineRunning || dt.cranking) {
+      if (!this.stopped) {
+        this.notify('Stop the car before switching off');
+        return;
+      }
+      dt.stopEngine();
+      return;
+    }
+    const r = dt.startEngine();
+    if (!r.ok && r.reason) this.notify(r.reason);
+  }
+
+  toggleParkingBrake(): void {
+    this.parkingBrake = !this.parkingBrake;
+    this.notify(this.parkingBrake ? 'Parking brake applied' : 'Parking brake released');
+  }
+
+  toggleAutoHold(): void {
+    this.autoHoldEnabled = !this.autoHoldEnabled;
+    if (!this.autoHoldEnabled) this.autoHoldActive = false;
+    this.notify(this.autoHoldEnabled ? 'Auto hold on' : 'Auto hold off');
+  }
+
+  notify(msg: string): void {
+    this.message = msg;
+    this.messageAge = 0;
+  }
+
+  // --- Simulation ------------------------------------------------------------
+
   /** Call once per fixed step BEFORE `world.step()`. */
   update(input: DriveInput, dt: number): void {
     const t = this.tuning;
     const vc = this.controller;
+    const dtn = this.drivetrain;
     copySnapshot(this.curr, this.prev);
+    this.messageAge += dt;
 
     // Rapier's currentVehicleSpeed() includes the residual vertical velocity the
     // suspension holds at rest, so project the chassis velocity onto its forward axis.
@@ -182,71 +243,56 @@ export class VehiclePhysics {
     const absSpeed = Math.abs(this.speedMs);
     const stopped = absSpeed < t.stoppedSpeedMs;
 
-    // --- Stage-1 simple automatic: hold "back" at standstill to engage R, "forward" to engage D.
-    const wantsGear: SimpleGear | null =
-      this.gear === 'D' && input.back > 0.1 && input.forward < 0.1
-        ? 'R'
-        : this.gear === 'R' && input.forward > 0.1 && input.back < 0.1
-          ? 'D'
-          : null;
-    if (wantsGear && stopped) {
-      this.gearHoldTimer += dt;
-      if (this.gearHoldTimer > 0.2) {
-        this.gear = wantsGear;
-        this.gearHoldTimer = 0;
-      }
-    } else {
-      this.gearHoldTimer = 0;
+    this.throttle = input.forward;
+    this.braking = input.back;
+    const inDrive = dtn.selector === 'D' || dtn.selector === 'R';
+
+    // Drive-away release of the electronic parking brake.
+    if (this.parkingBrake && inDrive && dtn.engineRunning && this.throttle > 0.15) {
+      this.parkingBrake = false;
+      this.notify('Parking brake released');
     }
-    const accelPedal = this.gear === 'D' ? input.forward : input.back;
-    const brakePedal = this.gear === 'D' ? input.back : input.forward;
-    this.throttle = accelPedal;
-    this.braking = brakePedal;
+
+    // Auto hold: keeps the brakes on after a stop until the accelerator is pressed.
+    if (this.autoHoldEnabled && inDrive) {
+      if (stopped && this.braking > 0.2) this.autoHoldActive = true;
+      if (this.throttle > 0.05) this.autoHoldActive = false;
+    } else {
+      this.autoHoldActive = false;
+    }
 
     // --- Steering: rate-limited towards the target, self-centring when released.
     const st = t.steering;
+    const assist = t.steeringAssist ? 1.6 : 1;
     const target = clamp(input.steer, -1, 1);
-    let rate: number;
-    if (Math.abs(target) < 1e-3) {
-      rate = (1 / st.returnToCentreS) * clamp(absSpeed / 4, 0.35, 1);
-    } else {
-      rate = 1 / st.centreToLockS;
-    }
+    const rate =
+      Math.abs(target) < 1e-3
+        ? (assist / st.returnToCentreS) * clamp(absSpeed / 4, 0.35, 1)
+        : assist / st.centreToLockS;
     this.steerPosition = approach(this.steerPosition, target, rate * dt);
-
     ackermannAngles(this.centreSteerAngle, this.dim, this.angles);
     vc.setWheelSteering(WHEEL_FL, this.angles.left);
     vc.setWheelSteering(WHEEL_FR, this.angles.right);
 
-    // --- Drive force.
-    const d = t.drive;
-    let force = 0;
-    if (this.gear === 'D') {
-      force = accelPedal * Math.min(d.maxTractiveForceN, d.wheelPowerW / Math.max(absSpeed, 0.1));
-    } else {
-      const revLimit = d.maxReverseSpeedKmh / MS_TO_KMH;
-      const fade = 1 - clamp(-this.speedMs / revLimit, 0, 1);
-      force = -accelPedal * d.maxReverseForceN * fade;
-    }
-    const front = (force * d.frontDriveBias) / 2;
-    const rear = (force * (1 - d.frontDriveBias)) / 2;
-    vc.setWheelEngineForce(WHEEL_FL, front);
-    vc.setWheelEngineForce(WHEEL_FR, front);
-    vc.setWheelEngineForce(WHEEL_RL, rear);
-    vc.setWheelEngineForce(WHEEL_RR, rear);
+    // --- Drivetrain -> tractive force at the wheels.
+    dtn.update(this.throttle, this.speedMs, dt);
+    const force = dtn.wheelForce;
+    const frontDrive = (force * t.drive.frontDriveBias) / 2;
+    const rearDrive = (force * (1 - t.drive.frontDriveBias)) / 2;
 
-    // --- Brakes. Rapier expects a per-step impulse, so convert force * dt.
+    // --- Brakes.
     const b = t.brakes;
-    let brakeF = brakePedal * b.maxBrakeForceN;
-    // Hold the car at standstill when no throttle is applied.
-    if (stopped && accelPedal < 0.05) brakeF = Math.max(brakeF, 0.5 * b.maxBrakeForceN);
-    const frontImp = ((brakeF * b.frontBias) / 2) * dt;
-    let rearImp = ((brakeF * (1 - b.frontBias)) / 2) * dt;
-    if (input.handbrake) rearImp += (b.handbrakeForceN / 2) * dt;
-    vc.setWheelBrake(WHEEL_FL, frontImp);
-    vc.setWheelBrake(WHEEL_FR, frontImp);
-    vc.setWheelBrake(WHEEL_RL, rearImp);
-    vc.setWheelBrake(WHEEL_RR, rearImp);
+    let serviceF = this.braking * b.maxBrakeForceN;
+    if (this.autoHoldActive) serviceF = Math.max(serviceF, 0.5 * b.maxBrakeForceN);
+    let frontBrake = (serviceF * b.frontBias) / 2;
+    let rearBrake = (serviceF * (1 - b.frontBias)) / 2;
+    if (this.parkingBrake) rearBrake += b.parkingBrakeForceN / 2;
+    if (dtn.selector === 'P') frontBrake += b.parkPawlForceN / 2; // pawl locks the driven (front) wheels
+
+    this.applyWheelForces(WHEEL_FL, frontDrive, frontBrake, dt);
+    this.applyWheelForces(WHEEL_FR, frontDrive, frontBrake, dt);
+    this.applyWheelForces(WHEEL_RL, rearDrive, rearBrake, dt);
+    this.applyWheelForces(WHEEL_RR, rearDrive, rearBrake, dt);
 
     // --- Aero drag + rolling resistance as an impulse against the horizontal velocity.
     const sp = Math.hypot(v.x, v.z);
@@ -269,7 +315,7 @@ export class VehiclePhysics {
     this.captureInto(this.curr);
   }
 
-  /** Teleport back to the spawn point (or a new one), zeroing all motion. */
+  /** Teleport back to the spawn point (or a new one), zeroing all motion. Keeps the engine state. */
   reset(spawn?: Spawn): void {
     if (spawn) this.spawn = { ...spawn };
     const s = this.spawn;
@@ -278,8 +324,10 @@ export class VehiclePhysics {
     this.body.setLinvel({ x: 0, y: 0, z: 0 }, true);
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.steerPosition = 0;
-    this.gear = 'D';
     this.speedMs = 0;
+    this.drivetrain.selector = 'P';
+    this.parkingBrake = true;
+    this.autoHoldActive = false;
     this.captureInto(this.curr);
     copySnapshot(this.curr, this.prev);
   }
@@ -287,6 +335,29 @@ export class VehiclePhysics {
   dispose(): void {
     this.world.removeVehicleController(this.controller);
     this.world.removeRigidBody(this.body);
+  }
+
+  /**
+   * Rapier (like Bullet) ignores a wheel's brake whenever its engine force is non-zero,
+   * so combine drive and brake into a single command per wheel:
+   * whichever wins along the direction of (impending) motion is applied.
+   */
+  private applyWheelForces(i: number, driveF: number, brakeF: number, dt: number): void {
+    const vc = this.controller;
+    if (brakeF <= 0) {
+      vc.setWheelEngineForce(i, driveF);
+      vc.setWheelBrake(i, 0);
+      return;
+    }
+    const dir = Math.abs(this.speedMs) > 0.05 ? Math.sign(this.speedMs) : Math.sign(driveF) || 1;
+    const net = driveF * dir - brakeF;
+    if (net > 0) {
+      vc.setWheelEngineForce(i, dir * net);
+      vc.setWheelBrake(i, 0);
+    } else {
+      vc.setWheelEngineForce(i, 0);
+      vc.setWheelBrake(i, -net * dt); // Rapier expects a per-step impulse
+    }
   }
 
   private captureInto(s: VehicleSnapshot): void {
