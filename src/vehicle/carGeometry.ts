@@ -333,15 +333,19 @@ export interface WheelParts {
   spin: THREE.Group;
 }
 
-let sharedWheel: { tyre: THREE.BufferGeometry; rim: THREE.BufferGeometry; barrel: THREE.BufferGeometry; disc: THREE.BufferGeometry; caliper: THREE.BufferGeometry; cap: THREE.BufferGeometry } | null = null;
+type WheelGeometry = { tyre: THREE.BufferGeometry; rim: THREE.BufferGeometry; barrel: THREE.BufferGeometry; disc: THREE.BufferGeometry; caliper: THREE.BufferGeometry; cap: THREE.BufferGeometry };
+/** 'high' for the player's car; 'low' (about a tenth of the triangles) for instanced parked cars. */
+export type WheelDetail = 'high' | 'low';
+const sharedWheel: Partial<Record<WheelDetail, WheelGeometry>> = {};
 let sharedWheelMats: { rubber: THREE.Material; alloy: THREE.Material; alloyDark: THREE.Material; pocket: THREE.Material; disc: THREE.Material; caliper: THREE.Material } | null = null;
 
 /** Tyre with rounded shoulders, 5 twin-spoke alloy, brake disc and caliper. Outer face points +X. */
-export function buildWheel(d: CarDimensions, outwardSign: 1 | -1): WheelParts {
+export function buildWheel(d: CarDimensions, outwardSign: 1 | -1, detail: WheelDetail = 'high'): WheelParts {
   const r = d.wheelRadiusM;
   const w = d.wheelWidthM;
   const rimR = 0.2413; // 19 inch
-  if (!sharedWheel) {
+  const hi = detail === 'high';
+  if (!sharedWheel[detail]) {
     const hw = w / 2;
     const tyreProfile = [
       new THREE.Vector2(rimR - 0.005, -hw + 0.012),
@@ -355,7 +359,7 @@ export function buildWheel(d: CarDimensions, outwardSign: 1 | -1): WheelParts {
       new THREE.Vector2(rimR + 0.03, hw),
       new THREE.Vector2(rimR - 0.005, hw - 0.012),
     ];
-    const tyre = new THREE.LatheGeometry(tyreProfile, 48);
+    const tyre = new THREE.LatheGeometry(tyreProfile, hi ? 48 : 24);
     tyre.rotateZ(-Math.PI / 2); // lathe axis Y -> X
 
     // Alloy face: disc with spoke windows, extruded with a soft bevel.
@@ -373,11 +377,18 @@ export function buildWheel(d: CarDimensions, outwardSign: 1 | -1): WheelParts {
         face.holes.push(hole);
       }
     }
-    const rim = new THREE.ExtrudeGeometry(face, { depth: 0.025, bevelEnabled: true, bevelThickness: 0.01, bevelSize: 0.008, bevelSegments: 3, curveSegments: 40 });
+    const rim = new THREE.ExtrudeGeometry(face, {
+      depth: 0.025,
+      bevelEnabled: true,
+      bevelThickness: 0.01,
+      bevelSize: 0.008,
+      bevelSegments: hi ? 3 : 1,
+      curveSegments: hi ? 40 : 8,
+    });
     rim.rotateY(Math.PI / 2); // face normal -> +X
     rim.translate(w / 2 - 0.05, 0, 0);
 
-    const barrel = new THREE.CylinderGeometry(rimR - 0.006, rimR - 0.006, w - 0.03, 40, 1, true);
+    const barrel = new THREE.CylinderGeometry(rimR - 0.006, rimR - 0.006, w - 0.03, hi ? 40 : 20, 1, true);
     barrel.rotateZ(Math.PI / 2);
     const disc = new THREE.CylinderGeometry(0.17, 0.17, 0.026, 40);
     disc.rotateZ(Math.PI / 2);
@@ -387,8 +398,8 @@ export function buildWheel(d: CarDimensions, outwardSign: 1 | -1): WheelParts {
     cap.translate(w / 2 - 0.02, 0, 0);
     const caliper = new RoundedBoxGeometry(0.06, 0.12, 0.16, 2, 0.02);
     caliper.translate(w / 2 - 0.12, 0.12, -0.06);
-    sharedWheel = { tyre, rim, barrel, disc, caliper, cap };
-    sharedWheelMats = {
+    sharedWheel[detail] = { tyre, rim, barrel, disc, caliper, cap };
+    sharedWheelMats ??= {
       rubber: new THREE.MeshStandardMaterial({ color: 0x1a1a1b, roughness: 0.88, metalness: 0 }),
       alloy: new THREE.MeshPhysicalMaterial({ color: 0xc9ccd0, metalness: 0.95, roughness: 0.22, clearcoat: 0.6, clearcoatRoughness: 0.1 }),
       alloyDark: new THREE.MeshStandardMaterial({ color: 0x2d2f33, metalness: 0.8, roughness: 0.45 }),
@@ -397,7 +408,7 @@ export function buildWheel(d: CarDimensions, outwardSign: 1 | -1): WheelParts {
       caliper: new THREE.MeshStandardMaterial({ color: 0x1f1f22, metalness: 0.4, roughness: 0.5 }),
     };
   }
-  const g = sharedWheel;
+  const g = sharedWheel[detail]!;
   const mats = sharedWheelMats!;
 
   const pivot = new THREE.Group();

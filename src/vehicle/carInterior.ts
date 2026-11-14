@@ -29,7 +29,12 @@ export interface CarInterior {
   steeringWheel: THREE.Group;
   /** Redraw the driver's digital cluster. */
   drawCluster(d: ClusterData): void;
+  /** Glass of the interior rear-view mirror (faces the driver); gets the mirror image as its map. */
+  mirrorGlass: THREE.Mesh;
 }
+
+/** Interior mirror centre in the body frame. */
+export const INTERIOR_MIRROR = new THREE.Vector3(0, 1.43, 0.24);
 
 export function buildInterior(cabinHalfWidth: number, roofY: number): CarInterior {
   const group = new THREE.Group();
@@ -150,7 +155,12 @@ export function buildInterior(cabinHalfWidth: number, roofY: number): CarInterio
 
   // Headliner and interior rear-view mirror.
   add(rbox(cabinHalfWidth * 1.7, 0.02, 2.2, 0.008), headliner, 0, roofY - 0.03, -1.0);
-  add(rbox(0.26, 0.07, 0.03, 0.012), piano, 0, 1.5, 0.14);
+  add(rbox(0.26, 0.07, 0.03, 0.012), piano, INTERIOR_MIRROR.x, INTERIOR_MIRROR.y, INTERIOR_MIRROR.z);
+  // Glass faces -Z (towards the driver); toneMapped like the rest of the scene.
+  const mirrorGlass = new THREE.Mesh(new THREE.PlaneGeometry(0.24, 0.055), new THREE.MeshBasicMaterial({ color: 0x222428 }));
+  mirrorGlass.rotation.y = Math.PI;
+  mirrorGlass.position.set(INTERIOR_MIRROR.x, INTERIOR_MIRROR.y, INTERIOR_MIRROR.z - 0.0165);
+  group.add(mirrorGlass);
 
   function drawCluster(d: ClusterData): void {
     if (!ctx || !tex) return;
@@ -198,5 +208,5 @@ export function buildInterior(cabinHalfWidth: number, roofY: number): CarInterio
     tex.needsUpdate = true;
   }
 
-  return { group, steeringWheel, drawCluster };
+  return { group, steeringWheel, drawCluster, mirrorGlass };
 }

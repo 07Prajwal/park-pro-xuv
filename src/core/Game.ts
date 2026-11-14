@@ -1,52 +1,86 @@
 /**
- * Top-level game: loads assets, wires physics, rendering, input, audio, cameras
- * and HUD together and runs the main loop.
+ * Top-level game: loads assets, wires physics, rendering, input, audio, cameras,
+ * levels, menus and HUD together and runs the main loop.
  *
  * Loop model: physics advances in fixed 1/60 s steps (accumulator); rendering
  * runs at display rate and interpolates the car between the last two physics
  * states, so motion stays smooth on 60/90/120 Hz displays and under frame jitter.
+ * Slow motion scales the time fed to the accumulator, so physics stays exact.
  */
 
 import { PAINT_COLOURS, PHYSICS, XUV_7XO, XUV_DRIVETRAIN, XUV_TUNING } from '../config';
 import { AudioEngine } from '../audio/AudioEngine';
-import { CAMERA_MODES, CameraRig } from '../cameras/CameraRig';
+import { CAMERA_MODES, CameraRig, type CameraMode } from '../cameras/CameraRig';
+import { InteriorMirror } from '../cameras/InteriorMirror';
 import { PipOverlay, PipView, type ScreenRect } from '../cameras/PipView';
 import { GUIDE_LAYER } from '../cameras/reverseGuidelines';
 import { InputState } from '../input/InputState';
 import { KeyboardInput } from '../input/KeyboardInput';
 import { PointerInput } from '../input/PointerInput';
+import { GuideVisuals } from '../levels/GuideVisuals';
+import { LevelSession } from '../levels/LevelSession';
+import { LEVELS } from '../levels/levels';
+import type { Difficulty, Pose } from '../levels/types';
 import { Hud } from '../ui/Hud';
+import { Menus, type MenuActions } from '../ui/Menus';
+import { ParkingSensors } from '../vehicle/ParkingSensors';
+import { maxCentreSteerAngle } from '../vehicle/steering';
 import { VehicleLights } from '../vehicle/VehicleLights';
-import { VehiclePhysics, type Spawn } from '../vehicle/VehiclePhysics';
+import { VehiclePhysics } from '../vehicle/VehiclePhysics';
 import { STEERING_WHEEL_LOCK_RAD, VehicleVisual } from '../vehicle/VehicleVisual';
-import { buildPracticeGround } from '../world/practiceGround';
+import { buildBaseGround, type BaseGround } from '../world/baseGround';
+import { LevelProps } from '../world/levelProps';
 import { loadAssets } from './assets';
 import { createPhysics, type PhysicsContext } from './physics';
 import { pickQuality } from './quality';
 import { createRenderContext, createRenderer, type RenderContext } from './renderer';
+import { isUnlocked, loadProgress, loadSettings, recordScore, saveSettings, scoreKey, type Progress, type Settings } from './storage';
 
-const SPAWN: Spawn = { x: 0, z: -55, yaw: 0 };
 const RAD_TO_DEG = 180 / Math.PI;
+const SLOW_MOTION = 0.35;
+const RESULT_DELAY_S = 1.2;
+const SHAKE_S = 0.3;
+const DIFF_LABEL: Record<Difficulty, string> = { beginner: 'Beginner', normal: 'Normal', hard: 'Hard' };
+const MIRROR_LABEL = { off: 'Door mirrors off', cabin: 'Door mirrors in cabin views', all: 'Door mirrors in all views' } as const;
 
 export class Game {
   private readonly input = new InputState();
   private readonly keyboard: KeyboardInput;
   private readonly hud: Hud;
+  private readonly menus: Menus;
   private readonly rig: CameraRig;
   private readonly car: VehiclePhysics;
+  private readonly carCollider: number;
   private readonly lights = new VehicleLights();
   private readonly carVisual: VehicleVisual;
+  private readonly sensors: ParkingSensors;
+  private readonly base: BaseGround;
+  private readonly props: LevelProps;
+  private readonly guides: GuideVisuals;
   private readonly overlay = new PipOverlay();
   private readonly rearPip: PipView;
   /** [right mirror (driver's side), left mirror]. */
   private readonly mirrorPips: PipView[];
-  private mirrorsEnabled: boolean;
+  private readonly interiorMirror: InteriorMirror;
+  private readonly settings: Settings;
+  private readonly progress: Progress;
+  private readonly maxSteer = maxCentreSteerAngle(XUV_7XO);
   private audio: AudioEngine | null = null;
   private audioStarting = false;
 
+  private session!: LevelSession;
+  private levelIndex = 0;
+  private resultTimer = -1;
+  private resultDelayS = RESULT_DELAY_S;
+  private slowMotion = false;
+  private demoReturn: (() => void) | null = null;
+  private demoCameraReturn: CameraMode | null = null;
+  private pauseCameraReturn: CameraMode | null = null;
+  private shakeTime = 0;
+  private shakeAmp = 0;
+
   private accumulator = 0;
   private lastTime = -1;
-  private paused = false;
   private fps = 60;
   private fpsFrames = 0;
   private fpsTime = 0;
@@ -54,6 +88,7 @@ export class Game {
   private rearFull = false;
   private readonly rearRect: ScreenRect = { x: 0, y: 0, w: 1, h: 1 };
   private readonly fullRect: ScreenRect = { x: 0, y: 0, w: 1, h: 1 };
+  private readonly pose: Pose = { x: 0, z: 0, yaw: 0 };
 
   private constructor(
     private readonly phys: PhysicsContext,
@@ -61,15 +96,24 @@ export class Game {
     assets: Awaited<ReturnType<typeof loadAssets>>,
     hudRoot: HTMLElement,
   ) {
-    buildPracticeGround(gfx.scene, phys, assets);
+    this.settings = loadSettings(gfx.quality.level === 'high');
+    this.progress = loadProgress();
+    this.base = buildBaseGround(gfx.scene, phys, assets);
+    this.props = new LevelProps(gfx.scene, phys, assets);
 
-    this.car = new VehiclePhysics(phys.R, phys.world, XUV_7XO, XUV_TUNING, XUV_DRIVETRAIN, SPAWN);
+    this.car = new VehiclePhysics(phys.R, phys.world, XUV_7XO, XUV_TUNING, XUV_DRIVETRAIN, { x: 0, z: 0, yaw: 0 });
+    this.carCollider = this.car.body.collider(0).handle;
+    this.sensors = new ParkingSensors(phys.R, phys.world, this.car.body, XUV_7XO);
     const paintIdx = Number(new URLSearchParams(location.search).get('paint') ?? 0);
     this.carVisual = new VehicleVisual(this.car, this.lights, PAINT_COLOURS[paintIdx] ?? PAINT_COLOURS[0]);
     gfx.scene.add(this.carVisual.root);
     const root = this.carVisual.root;
 
+    this.guides = new GuideVisuals(gfx.scene, XUV_7XO);
+    root.add(this.guides.eon, this.guides.zones);
+
     this.rig = new CameraRig(gfx.camera, this.carVisual);
+    if (CAMERA_MODES.some((m) => m.id === this.settings.camera)) this.rig.setMode(this.settings.camera as CameraMode);
 
     // Reverse camera on the tailgate: wide angle, tilted down, mirrored like the real display.
     this.rearPip = new PipView(72, true, this.overlay);
@@ -87,11 +131,13 @@ export class Game {
       root.add(pip.camera);
       return pip;
     });
-    this.mirrorsEnabled = gfx.quality.level === 'high';
+    this.interiorMirror = new InteriorMirror(root, this.carVisual.interiorMirrorMount, this.carVisual.interiorMirrorGlass);
 
     this.keyboard = new KeyboardInput(this.input, XUV_TUNING.pedals);
     new PointerInput(this.input, gfx.renderer.domElement);
     this.hud = new Hud(hudRoot);
+    this.menus = new Menus(this.menuActions, XUV_7XO);
+    window.addEventListener('pointerdown', () => (this.input.hadUserGesture = true), { capture: true });
 
     window.addEventListener('resize', () => {
       gfx.resize();
@@ -102,6 +148,36 @@ export class Game {
       this.lastTime = -1;
     });
     this.layout();
+
+    this.loadLevel(0);
+    this.menus.showLevels(LEVELS, this.progress, this.settings, true);
+    if (import.meta.env.DEV) this.devStart(new URLSearchParams(location.search));
+  }
+
+  /** Dev-only deep links for testing: ?level=4&diff=hard&cam=topdown&menu=tutorial|pause|none&demo&guides=0&eon&predict&gear=R&x=0&z=0&yaw=0&fast */
+  private devStart(q: URLSearchParams): void {
+    const diff = q.get('diff');
+    if (diff === 'beginner' || diff === 'normal' || diff === 'hard') this.settings.difficulty = diff;
+    if (q.has('eon')) this.settings.eonOutline = true;
+    if (q.has('predict')) this.settings.predictedPath = true;
+    if (q.get('guides') === '0') this.settings.guides = false;
+    const mirrors = q.get('mirrors');
+    if (mirrors === 'off' || mirrors === 'cabin' || mirrors === 'all') this.settings.mirrors = mirrors;
+    const level = Number(q.get('level'));
+    if (level >= 1 && level <= LEVELS.length) {
+      this.loadLevel(level - 1);
+      this.menus.hide();
+    }
+    const cam = q.get('cam');
+    if (cam && CAMERA_MODES.some((m) => m.id === cam)) this.rig.setMode(cam as CameraMode);
+    const menu = q.get('menu');
+    if (menu === 'tutorial') this.menus.showTutorial(this.session.def, this.session.layout, this.settings.difficulty);
+    if (menu === 'pause') this.menus.showPause(this.settings, !!this.session.layout.ideal);
+    if (q.has('x') && q.has('z')) this.car.reset({ x: Number(q.get('x')), z: Number(q.get('z')), yaw: Number(q.get('yaw') ?? 0) });
+    const gear = q.get('gear');
+    if (gear === 'D' || gear === 'R') this.car.drivetrain.selector = gear;
+    if (q.has('fast')) this.resultDelayS = 0.01;
+    if (q.has('demo')) this.startDemo();
   }
 
   static async create(canvas: HTMLCanvasElement, hudRoot: HTMLElement, onProgress: (f: number) => void): Promise<Game> {
@@ -118,6 +194,119 @@ export class Game {
   start(): void {
     this.gfx.renderer.setAnimationLoop(this.frame);
   }
+
+  // --- Levels ---------------------------------------------------------------------------
+
+  private loadLevel(index: number): void {
+    this.levelIndex = index;
+    const def = LEVELS[index];
+    this.session = new LevelSession(def, this.settings.difficulty, XUV_7XO);
+    const L = this.session.layout;
+    this.props.build(L);
+    this.guides.setIdeal(this.session.path, L.ideal);
+    this.guides.idealVisible = this.settings.guides;
+    this.props.showZone(L.target?.zone ?? this.session.nextGate);
+    this.car.reset(L.spawn);
+    this.rig.snap();
+    this.accumulator = 0;
+    this.resultTimer = -1;
+    this.hud.setLevel(def.id === 1 ? `Level 1 · ${def.title}` : `Level ${def.id} · ${def.title} · ${DIFF_LABEL[this.settings.difficulty]}`);
+  }
+
+  private readonly menuActions: MenuActions = {
+    startLevel: (id) => {
+      this.loadLevel(LEVELS.findIndex((l) => l.id === id));
+      this.menus.showTutorial(this.session.def, this.session.layout, this.settings.difficulty);
+    },
+    begin: () => this.menus.hide(),
+    retry: () => {
+      this.loadLevel(this.levelIndex);
+      this.menus.hide();
+      this.restorePauseCamera();
+    },
+    next: () => {
+      const n = this.levelIndex + 1;
+      if (n >= LEVELS.length) return;
+      this.loadLevel(n);
+      this.menus.showTutorial(this.session.def, this.session.layout, this.settings.difficulty);
+    },
+    showLevels: () => {
+      this.restorePauseCamera();
+      this.menus.showLevels(LEVELS, this.progress, this.settings, !this.session.finished);
+    },
+    resume: () => {
+      this.menus.hide();
+      this.restorePauseCamera();
+    },
+    checkpoint: () => {
+      this.menus.hide();
+      this.restorePauseCamera();
+      this.toCheckpoint();
+    },
+    demo: () => this.startDemo(),
+    setDifficulty: (d) => {
+      this.settings.difficulty = d;
+      saveSettings(this.settings);
+      this.menus.showLevels(LEVELS, this.progress, this.settings, !this.session.finished);
+    },
+    setSetting: (key, value) => {
+      this.settings[key] = value;
+      saveSettings(this.settings);
+      if (key === 'allLevelsOpen') this.menus.showLevels(LEVELS, this.progress, this.settings, !this.session.finished);
+      if (key === 'guides') this.guides.idealVisible = this.settings.guides;
+    },
+  };
+
+  private toCheckpoint(): void {
+    if (this.session.finished) return;
+    this.car.reset(this.session.restoreCheckpoint());
+    this.rig.snap();
+    this.accumulator = 0;
+    this.car.notify('Back to your last stop — select a gear to continue');
+  }
+
+  private startDemo(): void {
+    if (!this.guides.playGhost()) return;
+    const from = this.menus.screen;
+    this.menus.hide();
+    this.restorePauseCamera();
+    this.demoReturn =
+      from === 'tutorial'
+        ? () => this.menus.showTutorial(this.session.def, this.session.layout, this.settings.difficulty)
+        : from === 'result' && this.session.result
+          ? () => this.showResult(false)
+          : null;
+    if (this.rig.mode !== 'topdown') {
+      this.demoCameraReturn = this.rig.mode;
+      this.rig.setMode('topdown');
+    }
+  }
+
+  private endDemo(): void {
+    this.guides.stopGhost();
+    if (this.demoCameraReturn) this.rig.setMode(this.demoCameraReturn);
+    this.demoCameraReturn = null;
+    const ret = this.demoReturn;
+    this.demoReturn = null;
+    ret?.();
+  }
+
+  private showResult(record: boolean): void {
+    const r = this.session.result!;
+    const def = this.session.def;
+    let newBest = false;
+    if (record) newBest = recordScore(this.progress, scoreKey(def.id, this.settings.difficulty), { stars: r.score.stars, points: r.score.points, timeS: r.timeS });
+    const next = LEVELS[this.levelIndex + 1];
+    const hasNext = !!next && isUnlocked(next.id, this.progress, this.settings.allLevelsOpen);
+    this.menus.showResult(def, r, newBest, hasNext, !!this.session.layout.ideal);
+  }
+
+  private restorePauseCamera(): void {
+    if (this.pauseCameraReturn) this.rig.setMode(this.pauseCameraReturn);
+    this.pauseCameraReturn = null;
+  }
+
+  // --- Frame ------------------------------------------------------------------------------
 
   /** Screen placement of the picture-in-picture views (CSS pixels). */
   private layout(): void {
@@ -152,8 +341,10 @@ export class Game {
     this.ensureAudio();
     this.handleActions();
 
-    if (!this.paused) {
-      this.accumulator += dt;
+    const demo = this.guides.ghostPlaying;
+    const frozen = this.menus.isOpen || demo;
+    if (!frozen) {
+      this.accumulator += dt * (this.slowMotion ? SLOW_MOTION : 1);
       const step = PHYSICS.fixedDt;
       let steps = 0;
       while (this.accumulator >= step && steps < PHYSICS.maxSubSteps) {
@@ -165,40 +356,204 @@ export class Game {
       }
       if (steps === PHYSICS.maxSubSteps) this.accumulator = 0; // too slow: drop time instead of spiralling
       this.lights.update(dt, this.car.steerPosition);
+      this.handleContacts();
+      this.updateSession(dt);
+    } else {
+      this.phys.events.drainCollisionEvents(() => {});
     }
+    if (demo) {
+      this.guides.updateGhost(dt);
+      if (!this.guides.ghostPlaying) this.endDemo();
+    }
+    this.props.update();
 
     const alpha = this.accumulator / PHYSICS.fixedDt;
     const root = this.carVisual.root;
     this.carVisual.update(alpha, dt);
     root.updateMatrixWorld();
 
-    const reversing = this.car.drivetrain.selector === 'R';
+    const d = this.car.drivetrain;
+    const reversing = d.selector === 'R';
+    this.sensors.update(dt, d.selector, this.car.speedKmh);
+    this.guides.updateZones(this.sensors.distances, this.sensors.active);
+
     this.rig.showGuides = reversing;
     this.rig.update(this.input, dt);
+    this.applyShake(dt);
     this.gfx.followShadow(root.position.x, root.position.z);
 
+    const s = this.settings;
+    const steer = this.car.centreSteerAngle / this.maxSteer;
+    this.pose.x = root.position.x;
+    this.pose.z = root.position.z;
+    this.pose.yaw = yawOf(root.quaternion);
+    this.guides.updatePredicted(s.predictedPath && !demo && (d.selector === 'D' || reversing), this.pose, steer, reversing ? -1 : 1);
+    this.guides.eon.visible = s.eonOutline;
+
     // Views: full-screen rear camera replaces the main view; otherwise main view plus PiPs.
-    const rearFull = this.rig.mode === 'rear';
+    const mode = this.rig.mode;
+    const rearFull = mode === 'rear';
     if (rearFull !== this.rearFull) {
       this.rearFull = rearFull;
       this.layout();
     }
-    const inCabin = this.rig.mode === 'driver' || this.rig.mode === 'bonnet';
-    this.rearPip.visible = rearFull || (reversing && this.rig.mode !== 'surround' && this.rig.mode !== 'topdown');
-    for (const pip of this.mirrorPips) pip.visible = this.mirrorsEnabled && inCabin;
+    const inCabin = mode === 'driver' || mode === 'bonnet';
+    const overhead = mode === 'surround' || mode === 'topdown';
+    this.rearPip.visible = rearFull || (s.autoRearCamera && reversing && !overhead && !demo);
+    const mirrors = !rearFull && !demo && (s.mirrors === 'all' ? !overhead : s.mirrors === 'cabin' && inCabin);
+    for (const pip of this.mirrorPips) pip.visible = mirrors;
+    this.interiorMirror.visible = mode === 'driver';
     if (this.rearPip.visible || this.rig.showGuides) this.carVisual.guidelines.update(this.car.centreSteerAngle);
 
     const renderer = this.gfx.renderer;
+    this.interiorMirror.render(renderer, this.gfx.scene);
     if (rearFull) renderer.shadowMap.needsUpdate = true;
     else this.gfx.render(dt);
     this.rearPip.render(renderer, this.gfx.scene);
     for (const pip of this.mirrorPips) pip.render(renderer, this.gfx.scene);
-    if (this.rearPip.visible || (this.mirrorsEnabled && inCabin)) this.overlay.render(renderer);
+    if (this.rearPip.visible || mirrors) this.overlay.render(renderer);
     this.hud.setReverseCaption(this.rearPip.visible ? this.rearPip.rect : null);
 
     this.updateAudio(dt);
     this.updateFps(dt);
+    this.updateHud(dt, demo);
+  };
+
+  private handleContacts(): void {
+    const car = this.carCollider;
+    this.phys.events.drainCollisionEvents((h1, h2, started) => {
+      if (!started || (h1 !== car && h2 !== car)) return;
+      const other = h1 === car ? h2 : h1;
+      if (other === this.base.groundHandle || this.props.kerbHandles.has(other)) return;
+      const cone = this.props.coneHandles.get(other);
+      const impact = Math.min(1, Math.abs(this.car.speedMs) / 3);
+      if (cone !== undefined) {
+        if (this.session.onConeHit(cone)) {
+          this.audio?.bump(0.15);
+          this.car.notify('Cone hit');
+        }
+        return;
+      }
+      if (this.session.onCollision(other)) {
+        this.audio?.bump(impact);
+        this.shakeTime = SHAKE_S;
+        this.shakeAmp = 0.03 + 0.08 * impact;
+        this.car.notify('Collision!');
+      }
+    });
+  }
+
+  private updateSession(dt: number): void {
+    const c = this.car.curr;
+    const s = this.session;
+    const wasFinished = s.finished;
+    const gate = s.gateIndex;
+    this.pose.x = c.pos.x;
+    this.pose.z = c.pos.z;
+    this.pose.yaw = yawOfQuat(c.quat.x, c.quat.y, c.quat.z, c.quat.w);
+    const kerb = s.update(
+      { pose: this.pose, speedMs: this.car.speedMs, selector: this.car.drivetrain.selector, parkingBrake: this.car.parkingBrake },
+      dt,
+    );
+    if (kerb) {
+      this.audio?.kerbScrape();
+      this.car.notify('Kerb touch');
+    }
+    if (s.gateIndex !== gate) this.props.showZone(s.nextGate);
+    if (!wasFinished && s.finished) {
+      this.audio?.chime();
+      this.props.showZone(null);
+      this.resultTimer = this.resultDelayS;
+    }
+    if (this.resultTimer > 0) {
+      this.resultTimer -= dt;
+      if (this.resultTimer <= 0) this.showResult(true);
+    }
+  }
+
+  private applyShake(dt: number): void {
+    if (this.shakeTime <= 0) return;
+    this.shakeTime -= dt;
+    const k = Math.max(0, this.shakeTime / SHAKE_S) * this.shakeAmp;
+    const cam = this.gfx.camera;
+    cam.position.x += (Math.random() * 2 - 1) * k;
+    cam.position.y += (Math.random() * 2 - 1) * k;
+    cam.position.z += (Math.random() * 2 - 1) * k;
+  }
+
+  private handleActions(): void {
+    const i = this.input;
+    const s = this.settings;
+    if (i.consume('pause')) {
+      if (this.guides.ghostPlaying) this.endDemo();
+      else if (!this.menus.isOpen) {
+        this.pauseCameraReturn = this.rig.mode === 'orbit' ? null : this.rig.mode;
+        this.rig.setMode('orbit');
+        this.menus.showPause(s, !!this.session.layout.ideal);
+      }
+    }
+    if (this.menus.isOpen) {
+      // Driving actions are ignored while a menu is open.
+      for (const a of ['reset', 'checkpoint', 'selectorUp', 'selectorDown', 'parkingBrake', 'autoHold', 'ignition', 'camera'] as const) i.consume(a);
+      i.selectCamera = -1;
+      return;
+    }
+    if (i.consume('reset')) this.menuActions.retry();
+    if (i.consume('checkpoint')) this.toCheckpoint();
+    if (i.consume('selectorUp')) this.car.shiftSelector(-1);
+    if (i.consume('selectorDown')) this.car.shiftSelector(1);
+    if (i.consume('parkingBrake')) this.car.toggleParkingBrake();
+    if (i.consume('autoHold')) this.car.toggleAutoHold();
+    if (i.consume('ignition')) this.car.toggleIgnition();
+    if (i.consume('indicatorLeft')) this.lights.toggleLeft();
+    if (i.consume('indicatorRight')) this.lights.toggleRight();
+    if (i.consume('hazards')) this.lights.toggleHazards();
+    if (i.consume('lights')) this.lights.headlights = !this.lights.headlights;
+    if (i.consume('slowMotion')) {
+      this.slowMotion = !this.slowMotion;
+      this.car.notify(this.slowMotion ? 'Slow motion on' : 'Slow motion off');
+    }
+    if (i.consume('mirrors')) {
+      s.mirrors = s.mirrors === 'off' ? 'cabin' : s.mirrors === 'cabin' ? 'all' : 'off';
+      this.car.notify(MIRROR_LABEL[s.mirrors]);
+      saveSettings(s);
+    }
+    if (i.consume('guides')) {
+      s.guides = !s.guides;
+      this.guides.idealVisible = s.guides;
+      this.car.notify(s.guides ? 'Guides on' : 'Guides off');
+      saveSettings(s);
+    }
+    if (i.consume('eonOutline')) {
+      s.eonOutline = !s.eonOutline;
+      this.car.notify(s.eonOutline ? 'Hyundai Eon outline on' : 'Hyundai Eon outline off');
+      saveSettings(s);
+    }
+    if (i.consume('autoRearCamera')) {
+      s.autoRearCamera = !s.autoRearCamera;
+      this.car.notify(s.autoRearCamera ? 'Rear camera in R: on' : 'Rear camera in R: off');
+      saveSettings(s);
+    }
+    let cameraChanged = false;
+    if (i.consume('camera')) {
+      this.rig.next();
+      cameraChanged = true;
+    }
+    if (i.selectCamera >= 0) {
+      const m = CAMERA_MODES[i.selectCamera];
+      if (m) this.rig.setMode(m.id);
+      i.selectCamera = -1;
+      cameraChanged = true;
+    }
+    if (cameraChanged && s.camera !== this.rig.mode) {
+      s.camera = this.rig.mode;
+      saveSettings(s);
+    }
+  }
+
+  private updateHud(dt: number, demo: boolean): void {
     const d = this.car.drivetrain;
+    const s = this.session;
     this.hud.update(
       {
         speedKmh: this.car.speedKmh,
@@ -222,35 +577,25 @@ export class Game {
       },
       dt,
     );
-  };
-
-  private handleActions(): void {
-    const i = this.input;
-    if (i.consume('pause')) {
-      this.paused = !this.paused;
-      this.hud.setPaused(this.paused);
-    }
-    if (i.consume('reset')) {
-      this.car.reset();
-      this.rig.snap();
-      this.accumulator = 0;
-    }
-    if (i.consume('selectorUp')) this.car.shiftSelector(-1);
-    if (i.consume('selectorDown')) this.car.shiftSelector(1);
-    if (i.consume('parkingBrake')) this.car.toggleParkingBrake();
-    if (i.consume('autoHold')) this.car.toggleAutoHold();
-    if (i.consume('ignition')) this.car.toggleIgnition();
-    if (i.consume('indicatorLeft')) this.lights.toggleLeft();
-    if (i.consume('indicatorRight')) this.lights.toggleRight();
-    if (i.consume('hazards')) this.lights.toggleHazards();
-    if (i.consume('lights')) this.lights.headlights = !this.lights.headlights;
-    if (i.consume('mirrors')) this.mirrorsEnabled = !this.mirrorsEnabled;
-    if (i.consume('camera')) this.rig.next();
-    if (i.selectCamera >= 0) {
-      const m = CAMERA_MODES[i.selectCamera];
-      if (m) this.rig.setMode(m.id);
-      i.selectCamera = -1;
-    }
+    this.hud.updateLevel(
+      {
+        timeS: s.timeS,
+        collisions: s.collisions,
+        kerbTouches: s.kerbTouches,
+        conesHit: s.conesHit,
+        directionChanges: s.directionChanges,
+        gates: s.isCourse ? `${Math.min(s.gateIndex, s.layout.gates!.length)} / ${s.layout.gates!.length}` : '',
+      },
+      dt,
+    );
+    const showHint = !demo && !this.menus.isOpen && (this.settings.guides || s.isCourse);
+    this.hud.setHint(showHint ? s.hint : demo ? 'Ideal manoeuvre — press Esc to stop' : '');
+    this.hud.setSensors(this.sensors.distances, this.sensors.active && !this.menus.isOpen, this.sensors.nearest);
+    const chips: string[] = [];
+    if (this.slowMotion) chips.push('Slow motion');
+    if (s.usedCheckpoint && !s.finished) chips.push('Checkpoint used');
+    if (!this.settings.guides && s.isParkingLevel) chips.push('Guides off (G)');
+    this.hud.setChips(chips);
   }
 
   /** Audio can only start after a user gesture (browser autoplay rules). */
@@ -271,6 +616,7 @@ export class Game {
       if (d.selector === 'D' || d.selector === 'R') a.gearClunk();
       this.lastSelector = d.selector;
     }
+    const quiet = this.menus.isOpen;
     a.update(
       {
         rpm: d.engineRpm,
@@ -278,8 +624,9 @@ export class Game {
         throttle: this.car.throttle,
         cranking: d.cranking,
         running: d.engineRunning,
-        horn: this.input.horn,
-        reverse: d.selector === 'R' && d.engineRunning,
+        horn: this.input.horn && !quiet,
+        reverse: d.selector === 'R' && d.engineRunning && !quiet,
+        sensorM: quiet ? null : this.sensors.nearest,
       },
       dt,
     );
@@ -294,4 +641,13 @@ export class Game {
       this.fpsTime = 0;
     }
   }
+}
+
+function yawOfQuat(x: number, y: number, z: number, w: number): number {
+  // Heading of the rotated +Z axis projected on the ground.
+  return Math.atan2(2 * (x * z + w * y), 1 - 2 * (x * x + y * y));
+}
+
+function yawOf(q: { x: number; y: number; z: number; w: number }): number {
+  return yawOfQuat(q.x, q.y, q.z, q.w);
 }

@@ -12,6 +12,7 @@
 import type RAPIER_NS from '@dimforge/rapier3d-compat';
 import type { CarDimensions, VehicleTuning } from '../config';
 import { MS_TO_KMH, PHYSICS } from '../config';
+import { WHEEL_QUERY_GROUPS } from '../core/collisionGroups';
 import type { DriveInput } from '../input/InputState';
 import { Drivetrain, type DrivetrainConfig, type ShiftResult } from './Drivetrain';
 import { ackermannAngles, maxCentreSteerAngle, speedLockFactor, type WheelAngles } from './steering';
@@ -307,7 +308,7 @@ export class VehiclePhysics {
       this.body.applyImpulse(this.scratch, true);
     }
 
-    vc.updateVehicle(dt);
+    vc.updateVehicle(dt, undefined, WHEEL_QUERY_GROUPS);
   }
 
   /** Call once per fixed step AFTER `world.step()`. */

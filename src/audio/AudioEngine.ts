@@ -1,6 +1,7 @@
 /**
  * WebAudio sound system: procedural diesel engine (AudioWorklet), turbo and intake,
- * starter motor, indicator relay, reverse beeper, horn and gear-engagement clunk.
+ * starter motor, indicator relay, reverse beeper, parking-sensor beeps, horn,
+ * gear-engagement clunk, collision thud, kerb scrape and the success chime.
  *
  * No audio files are needed. The context is created on the first user gesture
  * (required by iOS Safari / Chrome autoplay rules). All per-frame updates only set
@@ -17,7 +18,13 @@ export interface AudioFrame {
   running: boolean;
   horn: boolean;
   reverse: boolean;
+  /** Nearest parking-sensor distance in metres, or null when the sensors are inactive. */
+  sensorM: number | null;
 }
+
+/** Beyond this the sensors stay silent; below SENSOR_SOLID_M the tone is continuous. */
+const SENSOR_SILENT_M = 1.5;
+const SENSOR_SOLID_M = 0.3;
 
 export class AudioEngine {
   private constructor(
@@ -32,10 +39,21 @@ export class AudioEngine {
     private readonly intakeGain: GainNode,
     private readonly starterGain: GainNode,
     private readonly hornGain: GainNode,
-    private readonly buffers: { tickOn: AudioBuffer; tickOff: AudioBuffer; beep: AudioBuffer; clunk: AudioBuffer },
+    private readonly sensorGain: GainNode,
+    private readonly buffers: {
+      tickOn: AudioBuffer;
+      tickOff: AudioBuffer;
+      beep: AudioBuffer;
+      clunk: AudioBuffer;
+      sensor: AudioBuffer;
+      thud: AudioBuffer;
+      scrape: AudioBuffer;
+      chime: AudioBuffer;
+    },
   ) {}
 
   private reverseTimer = 0;
+  private sensorTimer = 0;
   private lastParamUpdate = 0;
 
   /** Create and start the audio graph. Must be called from (or after) a user gesture. */
@@ -121,14 +139,26 @@ export class AudioEngine {
     }
     hornFilter.connect(hornGain).connect(master);
 
+    // Parking-sensor continuous tone (very close); intermittent beeps use a buffer.
+    const sensorOsc = ctx.createOscillator();
+    sensorOsc.frequency.value = 2050;
+    const sensorGain = ctx.createGain();
+    sensorGain.gain.value = 0;
+    sensorOsc.connect(sensorGain).connect(master);
+    sensorOsc.start();
+
     const buffers = {
       tickOn: clickBuffer(ctx, 2600, 0.012, 0.5),
       tickOff: clickBuffer(ctx, 1800, 0.01, 0.32),
       beep: toneBuffer(ctx, 1150, 0.13, 0.18),
       clunk: clickBuffer(ctx, 120, 0.09, 0.6),
+      sensor: toneBuffer(ctx, 2050, 0.07, 0.16),
+      thud: thudBuffer(ctx),
+      scrape: scrapeBuffer(ctx),
+      chime: chimeBuffer(ctx),
     };
 
-    return new AudioEngine(ctx, master, engine, engineGain, engineTone, turbo, turboGain, intake, intakeGain, starterGain, hornGain, buffers);
+    return new AudioEngine(ctx, master, engine, engineGain, engineTone, turbo, turboGain, intake, intakeGain, starterGain, hornGain, sensorGain, buffers);
   }
 
   setVolume(v: number): void {
@@ -139,7 +169,20 @@ export class AudioEngine {
   update(f: AudioFrame, dt: number): void {
     const now = this.ctx.currentTime;
 
-    if (f.reverse) {
+    const solid = f.sensorM !== null && f.sensorM < SENSOR_SOLID_M;
+    if (f.sensorM !== null && !solid && f.sensorM < SENSOR_SILENT_M) {
+      this.sensorTimer -= dt;
+      if (this.sensorTimer <= 0) {
+        this.play(this.buffers.sensor);
+        this.sensorTimer = 0.1 + (0.6 * (f.sensorM - SENSOR_SOLID_M)) / (SENSOR_SILENT_M - SENSOR_SOLID_M);
+      }
+    } else {
+      this.sensorTimer = 0;
+    }
+    this.sensorGain.gain.setTargetAtTime(solid ? 0.14 : 0, now, 0.01);
+
+    // The sensors replace the reverse beeper while they are active.
+    if (f.reverse && f.sensorM === null) {
       this.reverseTimer -= dt;
       if (this.reverseTimer <= 0) {
         this.play(this.buffers.beep);
@@ -177,6 +220,19 @@ export class AudioEngine {
 
   gearClunk(): void {
     this.play(this.buffers.clunk);
+  }
+
+  /** Body contact; strength 0..1 from the impact speed. */
+  bump(strength: number): void {
+    this.play(this.buffers.thud, 0.35 + 0.65 * Math.min(1, strength));
+  }
+
+  kerbScrape(): void {
+    this.play(this.buffers.scrape, 0.7);
+  }
+
+  chime(): void {
+    this.play(this.buffers.chime);
   }
 
   private play(buffer: AudioBuffer, gain = 1): void {
@@ -230,6 +286,55 @@ function toneBuffer(ctx: AudioContext, freq: number, seconds: number, level: num
   for (let i = 0; i < len; i++) {
     const env = Math.min(1, i / fade, (len - i) / fade);
     d[i] = level * env * Math.sin((2 * Math.PI * freq * i) / ctx.sampleRate);
+  }
+  return b;
+}
+
+/** Low body thump: damped 60-90 Hz sine with a short noise transient. */
+function thudBuffer(ctx: AudioContext): AudioBuffer {
+  const len = Math.floor(ctx.sampleRate * 0.35);
+  const b = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    const t = i / ctx.sampleRate;
+    const f = 90 - 30 * Math.min(1, t / 0.15);
+    d[i] = 0.8 * Math.exp(-t / 0.07) * Math.sin(2 * Math.PI * f * t) + 0.25 * Math.exp(-t / 0.008) * (Math.random() * 2 - 1);
+  }
+  return b;
+}
+
+/** Tyre rubbing a kerb: band-limited noise with a rough amplitude. */
+function scrapeBuffer(ctx: AudioContext): AudioBuffer {
+  const len = Math.floor(ctx.sampleRate * 0.4);
+  const b = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = b.getChannelData(0);
+  let lp = 0;
+  for (let i = 0; i < len; i++) {
+    const t = i / ctx.sampleRate;
+    lp += 0.25 * (Math.random() * 2 - 1 - lp);
+    const env = Math.min(1, t / 0.02) * Math.exp(-t / 0.18) * (0.7 + 0.3 * Math.sin(2 * Math.PI * 31 * t));
+    d[i] = 0.5 * env * lp;
+  }
+  return b;
+}
+
+/** Two-note success chime. */
+function chimeBuffer(ctx: AudioContext): AudioBuffer {
+  const len = Math.floor(ctx.sampleRate * 1.1);
+  const b = ctx.createBuffer(1, len, ctx.sampleRate);
+  const d = b.getChannelData(0);
+  for (let i = 0; i < len; i++) {
+    const t = i / ctx.sampleRate;
+    let v = 0;
+    for (const [f, t0] of [
+      [880, 0],
+      [1318.5, 0.16],
+    ]) {
+      if (t < t0) continue;
+      const u = t - t0;
+      v += Math.min(1, u / 0.005) * Math.exp(-u / 0.35) * (Math.sin(2 * Math.PI * f * u) + 0.3 * Math.sin(4 * Math.PI * f * u));
+    }
+    d[i] = 0.14 * v;
   }
   return b;
 }

@@ -12,6 +12,9 @@ import type { InputState } from '../input/InputState';
 import { ChaseCamera } from './ChaseCamera';
 import { GUIDE_LAYER } from './reverseGuidelines';
 
+/** Layer for the 360° distance zones (kept here to avoid a cameras -> levels dependency). */
+export const ZONE_LAYER = 2;
+
 export const CAMERA_MODES = [
   { id: 'chase', label: 'Chase' },
   { id: 'driver', label: "Driver's seat" },
@@ -120,6 +123,8 @@ export class CameraRig {
     const want = this.showGuides && this.mode === 'surround';
     if (want) cam.layers.enable(GUIDE_LAYER);
     else cam.layers.disable(GUIDE_LAYER);
+    if (this.mode === 'surround') cam.layers.enable(ZONE_LAYER);
+    else cam.layers.disable(ZONE_LAYER);
 
     switch (this.mode) {
       case 'chase':

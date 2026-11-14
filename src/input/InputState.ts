@@ -29,7 +29,12 @@ export type InputAction =
   | 'indicatorRight'
   | 'hazards'
   | 'lights'
-  | 'mirrors';
+  | 'mirrors'
+  | 'checkpoint'
+  | 'slowMotion'
+  | 'guides'
+  | 'eonOutline'
+  | 'autoRearCamera';
 
 const ACTIONS: readonly InputAction[] = [
   'reset',
@@ -45,6 +50,11 @@ const ACTIONS: readonly InputAction[] = [
   'hazards',
   'lights',
   'mirrors',
+  'checkpoint',
+  'slowMotion',
+  'guides',
+  'eonOutline',
+  'autoRearCamera',
 ];
 
 export class InputState implements DriveInput {

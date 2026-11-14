@@ -18,6 +18,12 @@ const HORN = ['KeyH'];
 
 const ACTION_KEYS: Record<string, InputAction> = {
   KeyR: 'reset',
+  Backspace: 'reset',
+  KeyK: 'checkpoint',
+  KeyT: 'slowMotion',
+  KeyG: 'guides',
+  KeyO: 'eonOutline',
+  KeyV: 'autoRearCamera',
   KeyC: 'camera',
   Escape: 'pause',
   KeyP: 'pause',
@@ -35,7 +41,7 @@ const ACTION_KEYS: Record<string, InputAction> = {
   KeyM: 'mirrors',
 };
 
-const PREVENT_DEFAULT = new Set([...FORWARD, ...BACK, ...LEFT, ...RIGHT, 'Space', 'Slash']);
+const PREVENT_DEFAULT = new Set([...FORWARD, ...BACK, ...LEFT, ...RIGHT, 'Space', 'Slash', 'Backspace']);
 
 export class KeyboardInput {
   private readonly down = new Set<string>();
