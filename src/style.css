@@ -159,12 +159,6 @@ body {
 .tt-epb.on {
   color: #ff5252;
 }
-.tt-hold.on {
-  color: #b0bec5;
-}
-.tt-hold.on.active {
-  color: #69f0ae;
-}
 .tt-lights.on {
   color: #69f0ae;
 }

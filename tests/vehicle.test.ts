@@ -54,8 +54,8 @@ describe('XUV vehicle physics', () => {
     const xs: number[] = [];
     const zs: number[] = [];
     const conn = car.wheelConnections[1]; // FR = outer wheel in a left turn
-    run(ctx, car, input({ steer: 1, back: 1 }), 1.5); // wind on full lock while held on the brake
-    run(ctx, car, input({ steer: 1 }), 14, () => {
+    run(ctx, car, input({ steer: 1 }), 1.5); // wind on full lock while standing still
+    run(ctx, car, input({ steer: 1, forward: 0.3 }), 14, () => {
       const p = car.curr.pos;
       const w = rotate(car.curr.quat, conn);
       xs.push(p.x + w.x);
@@ -68,11 +68,19 @@ describe('XUV vehicle physics', () => {
     expect(r).toBeLessThan(XUV_7XO.turningRadiusM * 1.12);
   });
 
-  it('R creeps backwards slowly with no throttle', () => {
-    getReady(ctx, car, 'R');
-    run(ctx, car, input(), 8);
+  it('a light touch on S reverses at walking pace', () => {
+    getReady(ctx, car);
+    run(ctx, car, input({ back: 0.25 }), 8);
     expect(car.curr.pos.z).toBeLessThan(-3);
-    expect(car.speedKmh).toBeGreaterThan(-10);
+    expect(car.speedKmh).toBeGreaterThan(-6);
+  });
+
+  it('steering reaches full lock within half a second of holding the key', () => {
+    getReady(ctx, car);
+    run(ctx, car, input({ steer: 1 }), 0.55);
+    expect(car.steerPosition).toBeGreaterThan(0.99);
+    run(ctx, car, input(), 1.5); // standing still, the wheel centres more slowly than when rolling
+    expect(Math.abs(car.steerPosition)).toBeLessThan(0.01);
   });
 });
 

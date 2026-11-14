@@ -15,11 +15,13 @@
  *  - Lock-up clutch: engages in higher gears at cruise, coupling engine and turbine rigidly.
  *  - Gearbox: throttle-dependent shift schedule with hysteresis, kickdown, and a short
  *    torque interruption during each shift.
- *  - Selector: P/R/N/D with real interlocks (brake to leave P, no R/P while moving).
+ *  - Direction: the driver has no selector. The vehicle picks D or R from the pedals
+ *    (see VehiclePhysics) and opens the clutch (`declutched`) while no pedal drives the car,
+ *    so there is no idle creep.
  */
 
-export type Gear = 'P' | 'R' | 'N' | 'D';
-export const GEAR_ORDER: readonly Gear[] = ['P', 'R', 'N', 'D'];
+export type Gear = 'R' | 'D';
+export const GEAR_ORDER: readonly Gear[] = ['R', 'D'];
 
 export interface DrivetrainConfig {
   idleRpm: number;
@@ -51,21 +53,16 @@ export interface DrivetrainConfig {
   downshiftRpm: readonly [number, number];
 
   starterCrankS: number;
-  /** Max |speed| (km/h) for leaving P / selecting R or P. */
-  parkShiftMaxKmh: number;
-  reverseShiftMaxKmh: number;
-}
-
-export interface ShiftResult {
-  ok: boolean;
-  reason?: string;
 }
 
 const RPM_TO_RADS = (2 * Math.PI) / 60;
 const SUB_STEPS = 8;
 
 export class Drivetrain {
-  selector: Gear = 'P';
+  /** Direction currently engaged: D (forward) or R (reverse). Stays put while the clutch is open. */
+  selector: Gear = 'D';
+  /** Clutch open: the engine idles and sends no torque to the wheels (no pedal is driving the car). */
+  declutched = true;
   /** Current forward gear (1-based) while in D. */
   gear = 1;
   engineRunning = false;
@@ -95,8 +92,9 @@ export class Drivetrain {
     return this.shiftTimer > 0;
   }
 
-  /** Overall ratio engine->wheel for the current selector/gear (signed; 0 in P/N). */
+  /** Overall ratio engine->wheel for the current direction/gear (signed; 0 with the clutch open). */
   get ratio(): number {
+    if (this.declutched) return 0;
     switch (this.selector) {
       case 'D':
         return this.cfg.gearRatios[this.gear - 1] * this.cfg.finalDrive;
@@ -107,12 +105,10 @@ export class Drivetrain {
     }
   }
 
-  startEngine(): ShiftResult {
-    if (this.engineRunning || this.cranking) return { ok: true };
-    if (this.selector !== 'P' && this.selector !== 'N') return { ok: false, reason: 'Shift to P or N to start the engine' };
+  startEngine(): void {
+    if (this.engineRunning || this.cranking) return;
     this.cranking = true;
     this.crankTimer = 0;
-    return { ok: true };
   }
 
   stopEngine(): void {
@@ -121,35 +117,18 @@ export class Drivetrain {
   }
 
   /**
-   * Request a selector change. Mirrors a shift-by-wire automatic:
-   * leaving P needs the brake and a standstill; R and P are refused while moving.
+   * Engage D or R. There is no driver-facing selector, so this has no interlocks and no
+   * engagement delay; the vehicle only calls it when the speed is right for the direction.
    */
-  requestSelector(target: Gear, brakePressed: boolean, speedKmh: number): ShiftResult {
-    const c = this.cfg;
-    if (target === this.selector) return { ok: true };
-    const absKmh = Math.abs(speedKmh);
-    if (this.selector === 'P') {
-      if (!brakePressed) return { ok: false, reason: 'Press the brake to shift out of P' };
-      if (absKmh > c.parkShiftMaxKmh) return { ok: false, reason: 'Stop the car first' };
-    }
-    if (target === 'P' && absKmh > c.parkShiftMaxKmh) return { ok: false, reason: 'Stop the car before selecting P' };
-    if (target === 'R' && speedKmh > c.reverseShiftMaxKmh) return { ok: false, reason: 'Stop before selecting R' };
-    if (target === 'D' && speedKmh < -c.reverseShiftMaxKmh) return { ok: false, reason: 'Stop before selecting D' };
+  engage(target: Gear, speedKmh: number): void {
+    this.declutched = false;
+    if (target === this.selector) return;
     this.selector = target;
     if (target === 'D') {
       this.gear = this.bestGearFor(Math.abs(speedKmh), 0);
       this.pendingGear = this.gear;
     }
-    this.shiftTimer = target === 'D' || target === 'R' ? this.cfg.shiftTimeS : 0; // engagement thump
     this.lockupBlend = 0;
-    return { ok: true };
-  }
-
-  /** Step one selector position up (towards P) or down (towards D). */
-  stepSelector(dir: -1 | 1, brakePressed: boolean, speedKmh: number): ShiftResult {
-    const i = GEAR_ORDER.indexOf(this.selector) + dir;
-    if (i < 0 || i >= GEAR_ORDER.length) return { ok: true };
-    return this.requestSelector(GEAR_ORDER[i], brakePressed, speedKmh);
   }
 
   /**

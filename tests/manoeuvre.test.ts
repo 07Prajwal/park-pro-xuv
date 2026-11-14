@@ -22,12 +22,6 @@ function rearAxle(p: Pose): { x: number; z: number } {
   return { x: p.x - (Math.sin(p.yaw) * CAR.wheelbaseM) / 2, z: p.z - (Math.cos(p.yaw) * CAR.wheelbaseM) / 2 };
 }
 
-function shiftTo(car: VehiclePhysics, gear: 'P' | 'R' | 'N' | 'D'): void {
-  const order = ['P', 'R', 'N', 'D'];
-  for (let i = 0; i < 4 && car.drivetrain.selector !== gear; i++) car.shiftSelector(order.indexOf(gear) < order.indexOf(car.drivetrain.selector) ? -1 : 1);
-  expect(car.drivetrain.selector).toBe(gear);
-}
-
 interface Drive {
   poses: Pose[];
   layout: LevelLayout;
@@ -35,11 +29,11 @@ interface Drive {
 }
 
 /**
- * Drive the physics car through the ideal segments like a careful learner:
- * stop, select the gear, steer while stationary, creep (with a little
- * accelerator on a hill), and brake on the mark. At a parking stop, secure the
- * car (parking brake and P) until the session accepts it, then pull away with
- * the foot on the brake. A level session scores the drive alongside.
+ * Drive the physics car through the ideal segments like a careful learner, with only the
+ * W and S pedals: steer while stationary, feather the pedal in the segment's direction to
+ * hold a walking pace (a little more on a hill), and brake with the opposite pedal on the
+ * mark. At a parking stop, apply the parking brake and wait until the session accepts it.
+ * A level session scores the drive alongside.
  */
 async function drive(levelId: number, d: Difficulty = 'normal'): Promise<Drive> {
   const def = LEVELS[levelId - 1];
@@ -49,7 +43,7 @@ async function drive(levelId: number, d: Difficulty = 'normal'): Promise<Drive> 
   const hilly = layout.surfaces.length > 0;
   car.reset(layout.spawn);
   run(ctx, car, input(), 0.5);
-  getReady(ctx, car, layout.ideal![0].dir > 0 ? 'D' : 'R');
+  getReady(ctx, car);
   const poses: Pose[] = [];
   const step = (ctx: PhysicsContext, inp: ReturnType<typeof input>, seconds: number) =>
     run(ctx, car, inp, seconds, () => {
@@ -57,37 +51,46 @@ async function drive(levelId: number, d: Difficulty = 'normal'): Promise<Drive> 
       poses.push(pose);
       session.update({ pose, y: car.body.translation().y, speedMs: car.speedMs, selector: car.drivetrain.selector, parkingBrake: car.parkingBrake }, dt);
     });
-  const secure = () => {
-    step(ctx, input({ back: 1 }), 0.6);
+  /** Pedal inputs for driving in `dir` (+1 W, -1 S) with `gas` and braking with the opposite pedal. */
+  const pedals = (dir: number, gas: number, brake: number, steer: number) => {
+    const driving = dir > 0 ? { forward: gas } : { back: gas };
+    const braking = dir > 0 ? { back: brake } : { forward: brake };
+    return input({ ...(brake > 0 ? braking : driving), steer });
+  };
+  const stop = (dir: number, steer: number) => {
+    for (let t = 0; t < 5 && Math.abs(car.speedMs) > 0.02; t += dt) step(ctx, pedals(dir, 0, 1, steer), dt);
+  };
+  const secure = (dir: number) => {
+    stop(dir, 0);
     car.parkingBrake = true;
-    shiftTo(car, 'P');
     step(ctx, input(), 2);
   };
 
+  let dir = layout.ideal![0].dir;
   for (const seg of layout.ideal!) {
-    // Stop and select the right gear; a secured car is released with the foot on the brake.
-    step(ctx, input({ back: 1, steer: seg.steer }), 0.4);
-    shiftTo(car, seg.dir > 0 ? 'D' : 'R');
+    dir = seg.dir;
+    // Steer to the mark while standing still, then let the parking brake go.
+    for (let t = 0; t < 4 && Math.abs(car.steerPosition - seg.steer) > 0.005; t += dt) step(ctx, input({ steer: seg.steer }), dt);
     car.parkingBrake = false;
-    // Steer to the mark while holding the brake.
-    for (let t = 0; t < 4 && Math.abs(car.steerPosition - seg.steer) > 0.005; t += dt) step(ctx, input({ back: 1, steer: seg.steer }), dt);
-    // Creep and brake to stop on the segment length.
+    // Drive at a walking pace and stop on the segment length.
     let travelled = 0;
     let last = rearAxle(poseOf(car));
     for (let t = 0; t < 40 && travelled < seg.dist - 0.005; t += dt) {
       const remaining = seg.dist - travelled;
       const target = Math.min(1.2, Math.sqrt(2 * 1.2 * remaining) + 0.05);
       const v = car.speedMs * seg.dir;
-      const brake = v > target ? Math.min(1, (v - target) * 2) : 0;
-      const gas = hilly && v < target - 0.25 ? Math.min(0.5, (target - v) * 0.6) : 0;
-      step(ctx, input({ forward: gas, back: brake, steer: seg.steer }), dt);
+      const brake = v > target + 0.15 ? Math.min(1, (v - target) * 2) : 0;
+      // Just above the crawl threshold (~0.2 pedal), a little more to build up speed.
+      const gas = v < target ? Math.min(hilly ? 0.7 : 0.45, 0.21 + (target - v) * 0.5) : 0;
+      step(ctx, pedals(seg.dir, gas, brake, seg.steer), dt);
       const now = rearAxle(poseOf(car));
       travelled += Math.hypot(now.x - last.x, now.z - last.z) * (v >= 0 ? 1 : -1);
       last = now;
     }
-    if (seg.stop) secure();
+    stop(seg.dir, seg.steer);
+    if (seg.stop) secure(seg.dir);
   }
-  secure();
+  secure(dir);
   return { poses, layout, session };
 }
 

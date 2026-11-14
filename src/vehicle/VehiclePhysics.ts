@@ -14,10 +14,13 @@ import type { CarDimensions, VehicleTuning } from '../config';
 import { MS_TO_KMH, PHYSICS } from '../config';
 import { WHEEL_QUERY_GROUPS } from '../core/collisionGroups';
 import type { DriveInput } from '../input/InputState';
-import { Drivetrain, type DrivetrainConfig, type ShiftResult } from './Drivetrain';
+import { Drivetrain, type DrivetrainConfig, type Gear } from './Drivetrain';
 import { ackermannAngles, maxCentreSteerAngle, speedLockFactor, type WheelAngles } from './steering';
 
 type Rapier = typeof RAPIER_NS;
+
+/** A pedal counts as pressed above this position. */
+const PEDAL_ON = 0.02;
 
 export interface Spawn {
   x: number;
@@ -83,9 +86,6 @@ export class VehiclePhysics {
   braking = 0;
   /** Electronic parking brake applied. */
   parkingBrake = true;
-  autoHoldEnabled = false;
-  /** Auto-hold is currently holding the car. */
-  autoHoldActive = false;
 
   /** Latest driver-facing message (e.g. refused shift) and its age. */
   message = '';
@@ -95,6 +95,8 @@ export class VehiclePhysics {
   private readonly angles: WheelAngles = { left: 0, right: 0 };
   private readonly scratch: Vec3Like = { x: 0, y: 0, z: 0 };
   private spawn: Spawn;
+  /** Seconds left of the pause after the opposite pedal has braked the car to a stop, before it drives off the other way. */
+  private reversalWait = 0;
 
   constructor(
     R: Rapier,
@@ -200,19 +202,12 @@ export class VehiclePhysics {
     return this.steerPosition * this.maxCentreSteer * speedLockFactor(this.speedKmh, this.tuning.steering);
   }
 
-  /** Brake lamps are lit by the pedal or by auto-hold. */
+  /** Brake lamps are lit while a pedal is braking the car. */
   get brakeLamps(): boolean {
-    return this.braking > 0.05 || this.autoHoldActive;
+    return this.braking > 0.05;
   }
 
   // --- Driver controls -------------------------------------------------------
-
-  /** Move the selector one step: -1 towards P, +1 towards D. */
-  shiftSelector(dir: -1 | 1): ShiftResult {
-    const r = this.drivetrain.stepSelector(dir, this.braking > 0.1, this.speedKmh);
-    if (!r.ok && r.reason) this.notify(r.reason);
-    return r;
-  }
 
   toggleIgnition(): void {
     const dt = this.drivetrain;
@@ -224,19 +219,12 @@ export class VehiclePhysics {
       dt.stopEngine();
       return;
     }
-    const r = dt.startEngine();
-    if (!r.ok && r.reason) this.notify(r.reason);
+    dt.startEngine();
   }
 
   toggleParkingBrake(): void {
     this.parkingBrake = !this.parkingBrake;
     this.notify(this.parkingBrake ? 'Parking brake applied' : 'Parking brake released');
-  }
-
-  toggleAutoHold(): void {
-    this.autoHoldEnabled = !this.autoHoldEnabled;
-    if (!this.autoHoldEnabled) this.autoHoldActive = false;
-    this.notify(this.autoHoldEnabled ? 'Auto hold on' : 'Auto hold off');
   }
 
   notify(msg: string): void {
@@ -263,22 +251,49 @@ export class VehiclePhysics {
     const absSpeed = Math.abs(this.speedMs);
     const stopped = absSpeed < t.stoppedSpeedMs;
 
-    this.throttle = input.forward;
-    this.braking = input.back;
-    const inDrive = dtn.selector === 'D' || dtn.selector === 'R';
-
-    // Drive-away release of the electronic parking brake.
-    if (this.parkingBrake && inDrive && dtn.engineRunning && this.throttle > 0.15) {
-      this.parkingBrake = false;
-      this.notify('Parking brake released');
+    // --- Pedals. W and S are the only drive controls and there is no gear selector:
+    // the pedal pointing the way the car is already moving drives it, the opposite pedal brakes
+    // it to a stop and then (after a short pause) drives it the other way. With no pedal the car
+    // does not creep or coast: an automatic brake holds it, on slopes too.
+    const d = t.drive;
+    const wantFwd = input.forward > PEDAL_ON;
+    const wantBack = input.back > PEDAL_ON;
+    let throttle = 0;
+    let service = 0;
+    let direction: Gear | null = null;
+    let drivePedal = 0;
+    if (wantFwd !== wantBack) {
+      const sign = wantFwd ? 1 : -1;
+      const pedal = wantFwd ? input.forward : input.back;
+      if (this.speedMs * sign < -d.reversalMs) {
+        service = pedal; // still moving the other way: this pedal is the brake
+        this.reversalWait = d.reversalDwellS;
+      } else if (this.reversalWait > 0) {
+        service = pedal; // just stopped: hold on the brake for a moment before reversing direction
+        this.reversalWait -= dt;
+      } else {
+        direction = wantFwd ? 'D' : 'R';
+        throttle = pedal;
+        drivePedal = pedal;
+      }
+    } else {
+      this.reversalWait = 0;
+      if (wantFwd) service = Math.max(input.forward, input.back); // both pedals: brake
     }
 
-    // Auto hold: keeps the brakes on after a stop until the accelerator is pressed.
-    if (this.autoHoldEnabled && inDrive) {
-      if (stopped && this.braking > 0.2) this.autoHoldActive = true;
-      if (this.throttle > 0.05) this.autoHoldActive = false;
-    } else {
-      this.autoHoldActive = false;
+    // A key press starts a stopped engine.
+    if (!dtn.engineRunning && !dtn.cranking && (wantFwd || wantBack)) dtn.startEngine();
+    if (!dtn.engineRunning) direction = null;
+    if (direction) dtn.engage(direction, this.speedKmh);
+    else dtn.declutched = true;
+
+    this.throttle = throttle;
+    this.braking = service;
+
+    // Drive-away release of the electronic parking brake.
+    if (this.parkingBrake && direction && throttle > 0.15) {
+      this.parkingBrake = false;
+      this.notify('Parking brake released');
     }
 
     // --- Steering: rate-limited towards the target, self-centring when released.
@@ -300,14 +315,21 @@ export class VehiclePhysics {
     const frontDrive = (force * t.drive.frontDriveBias) / 2;
     const rearDrive = (force * (1 - t.drive.frontDriveBias)) / 2;
 
-    // --- Brakes.
+    // --- Brakes. The automatic brake fades out as the driving pedal is pressed, so a hill start
+    // does not roll back and a flat start does not lurch.
     const b = t.brakes;
-    let serviceF = this.braking * b.maxBrakeForceN;
-    if (this.autoHoldActive) serviceF = Math.max(serviceF, 0.5 * b.maxBrakeForceN);
+    const fade = direction ? Math.max(0, 1 - drivePedal / b.idleBrakeFadePedal) : 0;
+    const idle = direction ? fade * fade : 1; // squared: no sudden jump in drive where the brake ends
+    const serviceF = Math.max(service, b.idleBrakeFraction * idle) * b.maxBrakeForceN;
     let frontBrake = (serviceF * b.frontBias) / 2;
     let rearBrake = (serviceF * (1 - b.frontBias)) / 2;
+    // Held at rest, the whole service force goes on the rear axle: Rapier's wheel brakes on both
+    // axles at once let a car held on a slope creep downhill, but one axle holds it still.
+    if (stopped && Math.abs(dtn.wheelForce) < 1) {
+      rearBrake += frontBrake;
+      frontBrake = 0;
+    }
     if (this.parkingBrake) rearBrake += b.parkingBrakeForceN / 2;
-    if (dtn.selector === 'P') frontBrake += b.parkPawlForceN / 2; // pawl locks the driven (front) wheels
 
     this.applyWheelForces(WHEEL_FL, frontDrive, frontBrake, dt);
     this.applyWheelForces(WHEEL_FR, frontDrive, frontBrake, dt);
@@ -362,9 +384,10 @@ export class VehiclePhysics {
     this.body.setAngvel({ x: 0, y: 0, z: 0 }, true);
     this.steerPosition = 0;
     this.speedMs = 0;
-    this.drivetrain.selector = 'P';
+    this.drivetrain.selector = 'D';
+    this.drivetrain.declutched = true;
     this.parkingBrake = true;
-    this.autoHoldActive = false;
+    this.reversalWait = 0;
     this.captureInto(this.curr);
     copySnapshot(this.curr, this.prev);
   }

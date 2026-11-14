@@ -148,7 +148,7 @@ export function buildInterior(cabinHalfWidth: number, roofY: number): CarInterio
   seat(0, -1.12, 1.42, 0.6, leather);
   seat(0, -1.85, 1.2, 0.52, leather);
 
-  // Centre console with the selector.
+  // Centre console.
   add(rbox(0.24, 0.2, 0.75, 0.04), soft, 0, 0.66, 0.05);
   add(rbox(0.05, 0.08, 0.08, 0.02), piano, 0, 0.8, 0.22);
   add(rbox(0.2, 0.01, 0.3, 0.004), piano, 0, 0.765, 0.25);

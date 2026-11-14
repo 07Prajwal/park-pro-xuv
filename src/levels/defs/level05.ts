@@ -62,7 +62,7 @@ export const level05: LevelDef = {
   technique: [
     'Approach close to the wall side of the aisle.',
     'When the bay opens, turn into it smoothly — angle bays need less steering than 90° bays.',
-    'Straighten and stop before the wheel stop. Select P.',
+    'Straighten and stop before the wheel stop.',
   ],
   build: angleBay,
 };

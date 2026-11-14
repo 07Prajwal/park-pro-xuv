@@ -50,7 +50,7 @@ export function reverseParallel(L: LevelLayout, o: ParallelOptions): Segment[] |
       if (a < 0) continue;
       candidates.push([
         { dir: 1, steer: 0, dist: a, hint: '' },
-        { dir: -1, steer: 1, dist: arc, hint: `Select R. Turn the wheel fully left and reverse slowly until the car is at about ${deg5}° to the kerb.` },
+        { dir: -1, steer: 1, dist: arc, hint: `Press S to reverse. Turn the wheel fully left and reverse slowly until the car is at about ${deg5}° to the kerb.` },
         ...(straight > 0.02
           ? [{ dir: -1 as const, steer: 0, dist: straight, hint: 'Straighten the wheel and reverse straight back until your front-left corner clears the vehicle in front.' }]
           : []),

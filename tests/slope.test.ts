@@ -25,12 +25,11 @@ describe('holding the car on a hill', () => {
       ['downhill space', endPose(L.spawn, ideal, CAR)],
     ];
     for (const [name, pose] of spots) {
-      for (const hold of ['P', 'parking brake'] as const) {
-        it(`${d}: held by ${hold} alone in the ${name}, drifts under 2 cm in 10 s`, async () => {
+      for (const hold of ['automatic hold', 'parking brake'] as const) {
+        it(`${d}: held by the ${hold} in the ${name} with no pedal pressed, drifts under 2 cm in 10 s`, async () => {
           const { ctx, car } = await makeLevelWorld(L);
           place(car, terrain, pose, 100);
-          if (hold === 'P') car.parkingBrake = false;
-          else car.drivetrain.selector = 'N';
+          car.parkingBrake = hold === 'parking brake';
           run(ctx, car, input(), 1);
           const a = car.body.translation();
           run(ctx, car, input(), 10);
@@ -39,6 +38,36 @@ describe('holding the car on a hill', () => {
         }, 30000);
       }
     }
+  }
+});
+
+describe('pulling away on a hill', () => {
+  for (const d of DIFFICULTIES) {
+    const L = LEVELS[11].build(d);
+    const terrain = new Terrain(L.surfaces);
+    const ideal = L.ideal!;
+    const stopAt = ideal.findIndex((s) => s.stop);
+    const pose = endPose(L.spawn, ideal.slice(0, stopAt + 1), CAR);
+    it(`${d}: full pedal uphill from the parked uphill space does not roll back more than 15 cm`, async () => {
+      const { ctx, car } = await makeLevelWorld(L);
+      place(car, terrain, pose, 100);
+      const p = car.body.translation();
+      const noseUp = terrain.pitch(pose.x, pose.z, pose.yaw, p.y) > 0;
+      const dir = noseUp ? 1 : -1; // +1: W drives uphill, -1: S does
+      getReady(ctx, car);
+      run(ctx, car, input(), 1);
+      const a = car.body.translation();
+      const fx = Math.sin(pose.yaw) * dir;
+      const fz = Math.cos(pose.yaw) * dir;
+      let back = 0;
+      run(ctx, car, noseUp ? input({ forward: 1 }) : input({ back: 1 }), 3, () => {
+        const b = car.body.translation();
+        back = Math.max(back, -((b.x - a.x) * fx + (b.z - a.z) * fz));
+      });
+      const b = car.body.translation();
+      expect((b.x - a.x) * fx + (b.z - a.z) * fz).toBeGreaterThan(1); // it did drive up the hill
+      expect(back).toBeLessThan(0.15);
+    }, 30000);
   }
 });
 
@@ -52,11 +81,11 @@ describe('car park ramp', () => {
     const x = ramp[0].rect.x;
     const zTop = Math.max(...ramp.map((s) => s.rect.z + s.rect.l / 2));
     place(car, terrain, { x, z: zTop + 4, yaw: Math.PI });
-    getReady(ctx, car, 'D');
+    getReady(ctx, car);
     let maxY = 0;
     for (let t = 0; t < 30; t += 0.1) {
       const v = Math.abs(car.speedMs);
-      run(ctx, car, input({ forward: v < 2.5 ? 0.35 : 0, back: v > 3.5 ? 0.3 : 0 }), 0.1);
+      run(ctx, car, v > 3.5 ? input({ back: 0.3 }) : input({ forward: v < 2.5 ? 0.45 : 0 }), 0.1);
       maxY = Math.max(maxY, car.body.translation().y);
       if (car.body.translation().z < deck.rect.z + deck.rect.l / 2 - 6) break;
     }

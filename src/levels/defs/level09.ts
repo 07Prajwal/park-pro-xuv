@@ -94,7 +94,7 @@ export const level09: LevelDef = {
     'Drive slowly and keep about 0.6 m from the parked vehicles on your left — the other side is just as close.',
     'Line up with the hatchback in front of the gap, then reverse with full left lock to about 45°.',
     'As your front swings out, check the right mirror for the autos and scooters across the street.',
-    'Full right lock to come parallel, stop close to the step and select P.',
+    'Full right lock to come parallel, stop close to the step.',
   ],
   build: narrowStreet,
 };

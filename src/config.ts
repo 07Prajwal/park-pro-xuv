@@ -112,6 +112,10 @@ export interface VehicleTuning {
   drive: {
     /** Fraction of tractive force sent to the front axle (XUV 7XO AX7 diesel AT = FWD). */
     frontDriveBias: number;
+    /** Speed (m/s) the car may still roll the opposite way before a pedal drives it instead of braking it first. */
+    reversalMs: number;
+    /** After braking to a stop with the opposite pedal, how long (s) the car waits before reversing. */
+    reversalDwellS: number;
   };
 
   brakes: {
@@ -120,8 +124,10 @@ export interface VehicleTuning {
     frontBias: number;
     /** Rear-axle electronic parking brake force, N. */
     parkingBrakeForceN: number;
-    /** Park-pawl holding force on the driven axle, N. */
-    parkPawlForceN: number;
+    /** Fraction of the service brake applied automatically while no pedal is pressed (the car does not coast or creep). */
+    idleBrakeFraction: number;
+    /** Pedal position at which that automatic brake has fully faded out. */
+    idleBrakeFadePedal: number;
   };
 
   pedals: {
@@ -130,7 +136,7 @@ export interface VehicleTuning {
     throttleFallS: number;
     brakeRiseS: number;
     brakeFallS: number;
-    /** Pedal cap while the fine-control modifier (Shift) is held. */
+    /** Pedal cap while the fine-control modifier (Shift) is held: about 4 km/h crawl, or a gentle brake. */
     fineThrottleCap: number;
     fineBrakeCap: number;
   };
@@ -168,8 +174,8 @@ export const XUV_TUNING: VehicleTuning = {
   },
 
   steering: {
-    centreToLockS: 1.1,
-    returnToCentreS: 0.9,
+    centreToLockS: 0.5,
+    returnToCentreS: 0.4,
     reductionStartKmh: 15,
     reductionEndKmh: 120,
     minLockFactor: 0.18,
@@ -177,22 +183,25 @@ export const XUV_TUNING: VehicleTuning = {
 
   drive: {
     frontDriveBias: 1.0,
+    reversalMs: 0.05,
+    reversalDwellS: 0.3,
   },
 
   brakes: {
     maxBrakeForceN: 17500,
     frontBias: 0.65,
     parkingBrakeForceN: 9000,
-    parkPawlForceN: 30000,
+    idleBrakeFraction: 0.35,
+    idleBrakeFadePedal: 0.4,
   },
 
   pedals: {
     throttleRiseS: 0.45,
     throttleFallS: 0.2,
-    brakeRiseS: 0.55,
-    brakeFallS: 0.15,
-    fineThrottleCap: 0.3,
-    fineBrakeCap: 0.35,
+    brakeRiseS: 0.45,
+    brakeFallS: 0.2,
+    fineThrottleCap: 0.26,
+    fineBrakeCap: 0.26,
   },
 
   steeringAssist: false,
@@ -244,8 +253,6 @@ export const XUV_DRIVETRAIN: DrivetrainConfig = {
   downshiftRpm: [1050, 2500],
 
   starterCrankS: 0.85,
-  parkShiftMaxKmh: 1.5,
-  reverseShiftMaxKmh: 3,
 };
 
 export interface PaintColour {

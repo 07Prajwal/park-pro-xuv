@@ -51,7 +51,7 @@ function reverseOut(d: Difficulty): LevelLayout {
   const hints = (s: number): [string, string, string] => [
     '',
     `Turn the wheel ${lockWord(s)} and keep reversing. The front swings towards the gate post on your left — watch the left mirror.`,
-    'Select D, straighten the wheel and drive away in the left lane. Stop and select P.',
+    'Press W, straighten the wheel and drive away in the left lane, then stop.',
   ];
   L.ideal = bestManoeuvre(
     L,
@@ -63,7 +63,7 @@ function reverseOut(d: Difficulty): LevelLayout {
   const stop = firstStop(L);
   if (stop && L.ideal) {
     const out = -(stop.z - CAR.wheelbaseM / 2 - REAR_OVERHANG);
-    L.ideal[0].hint = `Select R and reverse straight out slowly, looking both ways. Start turning when your rear bumper is about ${metres(out)} out into the road.`;
+    L.ideal[0].hint = `Press S and reverse straight out slowly, looking both ways. Start turning when your rear bumper is about ${metres(out)} out into the road.`;
   }
   L.parTimeS = { beginner: 40, normal: 35, hard: 30 }[d];
   return L;
@@ -77,7 +77,7 @@ export const level13: LevelDef = {
     'The walls hide the road: reverse out very slowly and look both ways using the rear camera and mirrors.',
     'Keep straight until the rear is well out into the road, then turn the wheel fully right.',
     'Watch the front swing towards the gate post as the car turns.',
-    'Stop when the car is straight in the far (left) lane, select D and drive away. Stop and select P.',
+    'Stop when the car is straight in the far (left) lane, press W and drive away, then stop.',
   ],
   build: reverseOut,
 };

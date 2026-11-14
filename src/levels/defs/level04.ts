@@ -18,7 +18,7 @@ function reverseBay(d: Difficulty): LevelLayout {
   };
   const hints = (s: number): [string, string, string] => [
     'Drive past the empty bay along the middle of the aisle and stop.',
-    `Select R. Turn the wheel ${lockWord(s)} and reverse slowly. Check the reverse camera and both mirrors as the rear swings into the bay.`,
+    `Press S to reverse. Turn the wheel ${lockWord(s)} and reverse slowly. Check the reverse camera and both mirrors as the rear swings into the bay.`,
     'When the car is straight, centre the wheel and reverse straight back until the red guideline touches the wheel stop.',
   ];
   L.ideal = bestManoeuvre(
@@ -41,8 +41,8 @@ export const level04: LevelDef = {
   summary: 'Reverse into a bay between two parked cars — the most common way to park in India.',
   technique: [
     'Drive past the bay and stop with your rear bumper about one bay-width past it (the hint gives the exact distance).',
-    'Select R, turn fully towards the bay and reverse slowly, checking both mirrors.',
-    'Straighten up and reverse until the red guideline reaches the wheel stop. Select P.',
+    'Press S to reverse, turn fully towards the bay and reverse slowly, checking both mirrors.',
+    'Straighten up and reverse until the red guideline reaches the wheel stop, then stop.',
   ],
   build: reverseBay,
 };

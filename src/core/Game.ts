@@ -65,6 +65,7 @@ export class Game {
   private readonly interiorMirror: InteriorMirror;
   private readonly settings: Settings;
   private readonly progress: Progress;
+  private devSteer: number | null = null;
   private readonly maxSteer = maxCentreSteerAngle(XUV_7XO);
   private audio: AudioEngine | null = null;
   private audioStarting = false;
@@ -85,7 +86,7 @@ export class Game {
   private fps = 60;
   private fpsFrames = 0;
   private fpsTime = 0;
-  private lastSelector = 'P';
+  private lastSelector = 'D';
   private rearFull = false;
   private readonly rearRect: ScreenRect = { x: 0, y: 0, w: 1, h: 1 };
   private readonly fullRect: ScreenRect = { x: 0, y: 0, w: 1, h: 1 };
@@ -178,6 +179,7 @@ export class Game {
     if (q.has('x') && q.has('z')) this.placeCar({ x: Number(q.get('x')), z: Number(q.get('z')), yaw: Number(q.get('yaw') ?? 0) }, Number(q.get('y') ?? 0));
     const gear = q.get('gear');
     if (gear === 'D' || gear === 'R') this.car.drivetrain.selector = gear;
+    if (q.has('steer')) this.devSteer = Number(q.get('steer')); // dev: hold the wheel at a fixed position
     if (q.has('fast')) this.resultDelayS = 0.01;
     if (q.has('demo')) this.startDemo();
   }
@@ -356,6 +358,7 @@ export class Game {
     this.lastTime = now;
 
     this.keyboard.poll(dt);
+    if (this.devSteer !== null) this.input.steer = this.devSteer;
     this.ensureAudio();
     this.handleActions();
 
@@ -421,7 +424,7 @@ export class Game {
     const mirrors = !rearFull && !demo && (s.mirrors === 'all' ? !overhead : s.mirrors === 'cabin' && inCabin);
     for (const pip of this.mirrorPips) pip.visible = mirrors;
     this.interiorMirror.visible = mode === 'driver';
-    if (this.rearPip.visible || this.rig.showGuides) this.carVisual.guidelines.update(this.car.centreSteerAngle);
+    if (this.rearPip.visible || this.rig.showGuides) this.carVisual.pathGuide.update(this.car.centreSteerAngle);
 
     const renderer = this.gfx.renderer;
     this.interiorMirror.render(renderer, this.gfx.scene);
@@ -521,16 +524,13 @@ export class Game {
     }
     if (this.menus.isOpen) {
       // Driving actions are ignored while a menu is open.
-      for (const a of ['reset', 'checkpoint', 'selectorUp', 'selectorDown', 'parkingBrake', 'autoHold', 'ignition', 'camera'] as const) i.consume(a);
+      for (const a of ['reset', 'checkpoint', 'parkingBrake', 'ignition', 'camera'] as const) i.consume(a);
       i.selectCamera = -1;
       return;
     }
     if (i.consume('reset')) this.menuActions.retry();
     if (i.consume('checkpoint')) this.toCheckpoint();
-    if (i.consume('selectorUp')) this.car.shiftSelector(-1);
-    if (i.consume('selectorDown')) this.car.shiftSelector(1);
     if (i.consume('parkingBrake')) this.car.toggleParkingBrake();
-    if (i.consume('autoHold')) this.car.toggleAutoHold();
     if (i.consume('ignition')) this.car.toggleIgnition();
     if (i.consume('indicatorLeft')) this.lights.toggleLeft();
     if (i.consume('indicatorRight')) this.lights.toggleRight();
@@ -591,8 +591,6 @@ export class Game {
         engineRunning: d.engineRunning,
         cranking: d.cranking,
         parkingBrake: this.car.parkingBrake,
-        autoHoldEnabled: this.car.autoHoldEnabled,
-        autoHoldActive: this.car.autoHoldActive,
         leftLit: this.lights.leftLit,
         rightLit: this.lights.rightLit,
         headlights: this.lights.headlights,

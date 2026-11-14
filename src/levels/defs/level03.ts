@@ -17,8 +17,8 @@ function forwardBay(d: Difficulty): LevelLayout {
   };
   const hints = (s: number): [string, string, string] => [
     'Drive slowly along the far side of the aisle. Start turning when your front bumper is level with the middle of the empty bay.',
-    `Turn the wheel ${lockWord(s)} and creep forward. Watch your left mirror: the front-left corner swings out towards the parked car.`,
-    'Straighten the wheel as the car lines up with the bay, then creep in until the front is about 30 cm from the wheel stop.',
+    `Turn the wheel ${lockWord(s)} and drive forward slowly. Watch your left mirror: the front-left corner swings out towards the parked car.`,
+    'Straighten the wheel as the car lines up with the bay, then drive in slowly until the front is about 30 cm from the wheel stop.',
   ];
   L.ideal = bestManoeuvre(
     L,
@@ -36,7 +36,7 @@ export const level03: LevelDef = {
   technique: [
     'Keep to the far side of the aisle to give yourself room to turn.',
     'Start turning when your front bumper is level with the middle of the bay; the front corner swings wide.',
-    'Straighten up inside the bay and stop just short of the wheel stop. Select P.',
+    'Straighten up inside the bay and stop just short of the wheel stop.',
   ],
   build: forwardBay,
 };

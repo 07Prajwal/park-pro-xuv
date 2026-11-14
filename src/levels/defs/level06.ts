@@ -55,7 +55,7 @@ export const level06: LevelDef = {
   technique: [
     'Stop alongside the front car, about 0.8 m away, with your rear bumper a little short of its rear bumper (the hint gives the distance).',
     'Full left lock and reverse until about 45° to the kerb.',
-    'Full right lock and reverse until parallel, close to the kerb without touching it. Select P.',
+    'Full right lock and reverse until parallel, close to the kerb without touching it, then stop.',
   ],
   build: parallel,
 };

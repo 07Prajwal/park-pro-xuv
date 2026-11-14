@@ -114,8 +114,8 @@ export interface ParkingTarget {
   maxAngleDeg: number;
   /** For kerbside parking: kerb line the car must be close to. */
   kerb?: { rect: OrientedRect; maxGapM: number };
-  /** How the car must be secured to finish: P or the parking brake ('either', default), or both. */
-  secure?: 'either' | 'both';
+  /** The parking brake must be applied (Space) as well as the car being stopped, e.g. when parking on a hill. */
+  needsParkingBrake?: boolean;
   /** Short name used in messages, e.g. "uphill space". */
   name?: string;
 }
@@ -133,7 +133,7 @@ export interface LevelRules {
   kerbPenalty?: number;
   /** Crossing a speed bump faster than this (km/h) is penalised. */
   bumpMaxKmh?: number;
-  /** Rolling against the selected gear (backwards in D, forwards in R) further than this (m) is penalised. */
+  /** Rolling against the driven direction (backwards after W, forwards after S) further than this (m) is penalised. */
   rollbackM?: number;
 }
 

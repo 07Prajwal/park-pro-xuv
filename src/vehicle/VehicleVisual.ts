@@ -23,7 +23,10 @@ const CLUSTER_INTERVAL_S = 0.1;
 
 export class VehicleVisual {
   readonly root = new THREE.Group();
+  /** Fixed straight guidelines (never move). */
   readonly guidelines: ReverseGuidelines;
+  /** Predicted-path line that follows the steering. */
+  readonly pathGuide: ReverseGuidelines;
   /** Camera mount points in the root frame. */
   readonly driverEye: THREE.Vector3;
   readonly bonnetEye: THREE.Vector3;
@@ -78,8 +81,9 @@ export class VehicleVisual {
       this.headlights.push(spot);
     }
 
-    this.guidelines = new ReverseGuidelines(d);
-    this.root.add(this.guidelines.mesh);
+    this.guidelines = new ReverseGuidelines(d, 'fixed');
+    this.pathGuide = new ReverseGuidelines(d, 'path');
+    this.root.add(this.guidelines.mesh, this.pathGuide.mesh);
 
     const shift = new THREE.Vector3(0, 0, offZ);
     this.driverEye = DRIVER_EYE.clone().add(shift);

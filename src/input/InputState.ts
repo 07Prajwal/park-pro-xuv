@@ -6,9 +6,9 @@
  * held key presses the pedal progressively, like a real foot.
  */
 export interface DriveInput {
-  /** Accelerator pedal, 0..1. */
+  /** Forward pedal (W / up arrow), 0..1: drives forward, or brakes while the car is reversing. */
   forward: number;
-  /** Brake pedal, 0..1. */
+  /** Back pedal (S / down arrow), 0..1: brakes while the car moves forward, drives in reverse once it is stopped. */
   back: number;
   /** Target steering, -1 (full right) .. +1 (full left). */
   steer: number;
@@ -20,10 +20,7 @@ export type InputAction =
   | 'reset'
   | 'camera'
   | 'pause'
-  | 'selectorUp' // towards P
-  | 'selectorDown' // towards D
   | 'parkingBrake'
-  | 'autoHold'
   | 'ignition'
   | 'indicatorLeft'
   | 'indicatorRight'
@@ -40,10 +37,7 @@ const ACTIONS: readonly InputAction[] = [
   'reset',
   'camera',
   'pause',
-  'selectorUp',
-  'selectorDown',
   'parkingBrake',
-  'autoHold',
   'ignition',
   'indicatorLeft',
   'indicatorRight',

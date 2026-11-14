@@ -58,8 +58,8 @@ describe('level ideal manoeuvres', () => {
       expect(i).toBeGreaterThan(0);
       const v = evaluateParking(endPose(L.spawn, L.ideal!.slice(0, i + 1), CAR), L.stops![0], CAR);
       expect(v.reason ?? 'ok').toBe('ok');
-      expect(L.stops![0].secure).toBe('both');
-      expect(L.target!.secure).toBe('both');
+      expect(L.stops![0].needsParkingBrake).toBe(true);
+      expect(L.target!.needsParkingBrake).toBe(true);
     });
   }
 

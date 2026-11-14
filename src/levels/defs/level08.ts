@@ -147,8 +147,8 @@ function carPark(d: Difficulty): LevelLayout {
   const target = { x: bayX - FOOT_OFF, z: zc, yaw: HALF_PI };
   const hints = (s: number): [string, string, string] => [
     '',
-    `Select R. Turn the wheel ${lockWord(s)} and reverse slowly into the bay, watching the pillar and the parked cars in both mirrors.`,
-    'Straighten up and reverse until the red guideline reaches the wheel stop. Select P.',
+    `Press S to reverse. Turn the wheel ${lockWord(s)} and reverse slowly into the bay, watching the pillar and the parked cars in both mirrors.`,
+    'Straighten up and reverse until the red guideline reaches the wheel stop, then stop.',
   ];
   const tails = [1, 0.92, 0.85].map((s) => solveStraightArcStraight(afterU, target, 1, { dir: -1, steer: s }, -1, CAR, hints(s)));
   L.ideal = bestManoeuvre(
@@ -179,8 +179,8 @@ export const level08: LevelDef = {
   technique: [
     'Cross speed bumps at walking pace: brake before the bump, roll over it, then accelerate gently.',
     'In the pillar lane, judge the gap with both door mirrors and keep the car in the middle.',
-    'On the ramp, keep a steady speed with a little accelerator. If you have to stop, hold the brake so the car does not roll back.',
-    'On the deck, drive past the bay, stop, and reverse in with the wheel turned towards it. Select P.',
+    'On the ramp, keep a steady speed with a little pressure on W. If you let go, the car holds still on the slope.',
+    'On the deck, drive past the bay, stop, and reverse in with the wheel turned towards it, then stop.',
   ],
   build: carPark,
 };

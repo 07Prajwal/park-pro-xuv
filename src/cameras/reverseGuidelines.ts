@@ -1,6 +1,9 @@
 /**
- * Dynamic reverse-camera guidelines: the predicted path of the rear bumper corners
- * for the current steering angle, like the XUV 7XO's reversing camera.
+ * Reverse-camera guidelines, in two styles:
+ *  - 'fixed': straight red / yellow / green lines the width of the car with distance
+ *    marks. They never move, so they show where the car goes if the wheel is straight.
+ *  - 'path': a separate cyan line that follows the steering wheel: the predicted path
+ *    of the rear bumper corners for the current steering angle, ending in a bar.
  *
  * Path model: kinematic bicycle model about the middle of the rear axle (the rear
  * wheels don't steer, so the car rotates about a centre on the rear-axle line).
@@ -45,21 +48,35 @@ export function reverseAxlePose(distance: number, centreSteerAngle: number, whee
 const COLOUR_NEAR = new THREE.Color(0xff3b30);
 const COLOUR_MID = new THREE.Color(0xffcc00);
 const COLOUR_FAR = new THREE.Color(0x34c759);
+const COLOUR_PATH = new THREE.Color(0x29b6f6);
 const SAMPLES = 32;
-const LINE_HALF_W = 0.025;
-const BAR_HALF_W = 0.02;
-/** Distance marks behind the bumper: full bar at 0.5 m, side ticks at 1 m and 2 m. */
-const MARKS = [
+
+export type GuidelineStyle = 'fixed' | 'path';
+
+interface Mark {
+  /** Distance behind the bumper, metres. */
+  d: number;
+  /** 0 for a full bar, else the length of a tick at each line. */
+  tick: number;
+}
+
+/** Fixed lines: full bar at 0.5 m, side ticks at 1 m and 2 m. The path line ends in one full bar. */
+const FIXED_MARKS: readonly Mark[] = [
   { d: 0.5, tick: 0 },
   { d: 1, tick: 0.3 },
   { d: 2, tick: 0.3 },
 ];
+const PATH_MARKS: readonly Mark[] = [{ d: GUIDE_LENGTH_M, tick: 0 }];
 
 export class ReverseGuidelines {
   readonly mesh: THREE.Mesh;
 
   private readonly positions: Float32Array;
   private readonly attr: THREE.BufferAttribute;
+  private readonly marks: readonly Mark[];
+  private readonly lineHalfW: number;
+  private readonly barHalfW: number;
+  private readonly lift: number;
   private readonly halfW: number;
   private readonly rearOverhang: number;
   private readonly rearAxleZ: number;
@@ -67,12 +84,21 @@ export class ReverseGuidelines {
   private readonly line = [new Float32Array(SAMPLES * 2), new Float32Array(SAMPLES * 2)];
   private lastAngle = NaN;
 
-  constructor(private readonly dim: CarDimensions) {
+  constructor(
+    private readonly dim: CarDimensions,
+    style: GuidelineStyle = 'fixed',
+  ) {
+    const path = style === 'path';
+    this.marks = path ? PATH_MARKS : FIXED_MARKS;
+    // The steering line is wider and drawn underneath, so the fixed lines stay visible on top of it.
+    this.lineHalfW = path ? 0.05 : 0.025;
+    this.barHalfW = path ? 0.04 : 0.02;
+    this.lift = 0.02;
     this.halfW = dim.widthM / 2;
     this.rearOverhang = dim.lengthM - dim.wheelbaseM - dim.frontOverhangM;
     this.rearAxleZ = -dim.wheelbaseM / 2;
 
-    const vertCount = 2 * SAMPLES * 2 + MARKS.length * 2 * 4;
+    const vertCount = 2 * SAMPLES * 2 + this.marks.length * 2 * 4;
     this.positions = new Float32Array(vertCount * 3);
     const colours = new Float32Array(vertCount * 3);
     const index: number[] = [];
@@ -82,7 +108,7 @@ export class ReverseGuidelines {
       const base = l * SAMPLES * 2;
       for (let i = 0; i < SAMPLES; i++) {
         const d = (i / (SAMPLES - 1)) * GUIDE_LENGTH_M;
-        const c = d < 0.5 ? COLOUR_NEAR : d < 1 ? COLOUR_MID : COLOUR_FAR;
+        const c = path ? COLOUR_PATH : d < 0.5 ? COLOUR_NEAR : d < 1 ? COLOUR_MID : COLOUR_FAR;
         for (let k = 0; k < 2; k++) c.toArray(colours, (base + i * 2 + k) * 3);
         if (i < SAMPLES - 1) {
           const a = base + i * 2;
@@ -92,8 +118,8 @@ export class ReverseGuidelines {
     }
     // Distance marks: two quads each (left and right halves, or ticks).
     let v = 2 * SAMPLES * 2;
-    for (const m of MARKS) {
-      const c = m.d <= 0.5 ? COLOUR_NEAR : m.d <= 1 ? COLOUR_MID : COLOUR_FAR;
+    for (const m of this.marks) {
+      const c = path ? COLOUR_PATH : m.d <= 0.5 ? COLOUR_NEAR : m.d <= 1 ? COLOUR_MID : COLOUR_FAR;
       for (let q = 0; q < 2; q++) {
         for (let k = 0; k < 4; k++) c.toArray(colours, (v + k) * 3);
         index.push(v, v + 1, v + 2, v + 1, v + 3, v + 2);
@@ -119,7 +145,7 @@ export class ReverseGuidelines {
     });
     this.mesh = new THREE.Mesh(geo, mat);
     this.mesh.layers.set(GUIDE_LAYER);
-    this.mesh.renderOrder = 10;
+    this.mesh.renderOrder = path ? 10 : 11;
     this.mesh.frustumCulled = false;
     this.update(0);
   }
@@ -140,7 +166,7 @@ export class ReverseGuidelines {
     if (Math.abs(centreSteerAngle - this.lastAngle) < 1e-4) return;
     this.lastAngle = centreSteerAngle;
     const P = this.positions;
-    const y = 0.02;
+    const y = this.lift;
     const tmp = { x: 0, z: 0 };
 
     for (let l = 0; l < 2; l++) {
@@ -160,8 +186,8 @@ export class ReverseGuidelines {
         const len = Math.hypot(tx, tz) || 1;
         tx /= len;
         tz /= len;
-        const nx = -tz * LINE_HALF_W;
-        const nz = tx * LINE_HALF_W;
+        const nx = -tz * this.lineHalfW;
+        const nz = tx * this.lineHalfW;
         const o = (base + i * 2) * 3;
         P[o] = pts[i * 2] + nx;
         P[o + 1] = y;
@@ -175,7 +201,7 @@ export class ReverseGuidelines {
     let v = 2 * SAMPLES * 2;
     const L = { x: 0, z: 0 };
     const R = { x: 0, z: 0 };
-    for (const m of MARKS) {
+    for (const m of this.marks) {
       this.corner(m.d, 1, centreSteerAngle, L);
       this.corner(m.d, -1, centreSteerAngle, R);
       let bx = R.x - L.x;
@@ -183,8 +209,8 @@ export class ReverseGuidelines {
       const width = Math.hypot(bx, bz) || 1;
       bx /= width;
       bz /= width;
-      const px = -bz * BAR_HALF_W;
-      const pz = bx * BAR_HALF_W;
+      const px = -bz * this.barHalfW;
+      const pz = bx * this.barHalfW;
       const len = m.tick > 0 ? m.tick : width / 2;
       // Left half / tick starts at the left line, right half / tick at the right line.
       for (const [sx, sz, dir] of [

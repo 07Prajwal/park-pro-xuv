@@ -55,7 +55,7 @@ function turnRound(d: Difficulty): LevelLayout {
 
   const R = minRearAxleRadius(CAR);
   const runIn: Segment = { dir: 1, steer: 0, dist: RUN_IN, hint: 'Drive slowly in the left lane. Check behind and ahead: the road must be clear before you turn.' };
-  const out: Segment = { dir: 1, steer: 0, dist: RUN_OUT, hint: 'Straighten up in the left lane, stop and select P.' };
+  const out: Segment = { dir: 1, steer: 0, dist: RUN_OUT, hint: 'Straighten up in the left lane and stop.' };
   const ok = (segs: Segment[]) => evaluateParking(endPose(L.spawn, segs, CAR), L.target!, CAR).ok;
 
   const checker = new ClearanceChecker(L, CAR);
@@ -77,7 +77,7 @@ function turnRound(d: Difficulty): LevelLayout {
           runIn,
           { dir: 1, steer: -1, dist: t1 * DEG * R, hint: '' },
           { dir: -1, steer: 1, dist: t2 * DEG * R, hint: '' },
-          { dir: 1, steer: -1, dist: t3 * DEG * R, hint: 'Select D, turn the wheel fully right again and drive round into the left lane.' },
+          { dir: 1, steer: -1, dist: t3 * DEG * R, hint: 'Press W, turn the wheel fully right again and drive round into the left lane.' },
           out,
         ];
         if (!ok(segs)) continue;
@@ -91,8 +91,8 @@ function turnRound(d: Difficulty): LevelLayout {
     if (best) {
       const toFar = tyreToKerb(L, best.slice(0, 2));
       const toWall = bodyToWall(L, best.slice(0, 3));
-      best[1].hint = `Turn the wheel fully right and creep across. Stop when your front tyres are about ${metres(toFar)} from the far kerb.`;
-      best[2].hint = `Select R. Turn the wheel fully left and reverse slowly. Stop with the rear bumper about ${metres(toWall)} from the wall behind (the kerb passes under the bumper).`;
+      best[1].hint = `Turn the wheel fully right and drive across slowly. Stop when your front tyres are about ${metres(toFar)} from the far kerb.`;
+      best[2].hint = `Press S to reverse. Turn the wheel fully left and reverse slowly. Stop with the rear bumper about ${metres(toWall)} from the wall behind (the kerb passes under the bumper).`;
     }
   }
   L.ideal = best;
@@ -106,9 +106,9 @@ export const level11: LevelDef = {
   summary: 'Turn round on a road narrower than the XUV’s turning circle and finish in the left lane facing the other way.',
   technique: [
     'Stop close to the left kerb. Check both ways; the turn blocks the whole road.',
-    'Full right lock and creep forward. Stop before the front tyres touch the far kerb.',
-    'Select R, full left lock, and reverse slowly. The bumper may pass over the kerb — stop before the wall.',
-    'Select D, full right lock again and drive away in the left lane. On a wider road (Beginner) one sweep is enough.',
+    'Full right lock and drive forward slowly. Stop before the front tyres touch the far kerb.',
+    'Press S to reverse, full left lock, and reverse slowly. The bumper may pass over the kerb — stop before the wall.',
+    'Press W, full right lock again and drive away in the left lane. On a wider road (Beginner) one sweep is enough.',
   ],
   build: turnRound,
 };

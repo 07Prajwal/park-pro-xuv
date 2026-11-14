@@ -1,46 +1,88 @@
 /**
- * Automatic transmission / engine behaviour (Stage 2 acceptance criteria).
+ * Automatic transmission / engine behaviour, driven only by the W and S pedals
+ * (there is no gear selector and no idle creep).
  */
 import { describe, expect, it } from 'vitest';
-import { XUV_7XO, XUV_DRIVETRAIN } from '../src/config';
-import { Drivetrain } from '../src/vehicle/Drivetrain';
+import { XUV_DRIVETRAIN } from '../src/config';
 import { dt, getReady, input, makeWorld, run } from './helpers';
 
-describe('selector interlocks (AC-2)', () => {
-  const make = () => new Drivetrain(XUV_DRIVETRAIN, XUV_7XO.wheelRadiusM);
-
-  it('refuses to leave P without the brake', () => {
-    const d = make();
-    expect(d.requestSelector('D', false, 0).ok).toBe(false);
-    expect(d.selector).toBe('P');
-    expect(d.requestSelector('D', true, 0).ok).toBe(true);
-  });
-
-  it('refuses to leave P when rolling above 1.5 km/h', () => {
-    const d = make();
-    expect(d.requestSelector('R', true, 2).ok).toBe(false);
-  });
-
-  it('refuses R or P above 3 km/h forwards, and D above 3 km/h backwards', () => {
-    const d = make();
-    d.requestSelector('D', true, 0);
-    expect(d.requestSelector('R', false, 10).ok).toBe(false);
-    expect(d.requestSelector('P', false, 10).ok).toBe(false);
-    expect(d.selector).toBe('D');
-    expect(d.requestSelector('N', false, 30).ok).toBe(true);
-    d.requestSelector('R', true, 0);
-    expect(d.requestSelector('D', false, -8).ok).toBe(false);
-  });
-});
-
 describe('drivetrain in the vehicle', () => {
-  it('AC-1: creeps to 5-9 km/h in D with no throttle and no brake', async () => {
+  it('does not move without a pedal: no idle creep', async () => {
     const { ctx, car } = await makeWorld();
     getReady(ctx, car);
+    const z0 = car.curr.pos.z;
     run(ctx, car, input(), 12);
-    expect(car.speedKmh).toBeGreaterThan(5);
-    expect(car.speedKmh).toBeLessThan(9);
-    expect(car.drivetrain.gear).toBe(1);
+    expect(Math.abs(car.curr.pos.z - z0)).toBeLessThan(0.05);
+    expect(Math.abs(car.speedKmh)).toBeLessThan(0.5);
+  });
+
+  it('a key press starts a stopped engine and then drives the car', async () => {
+    const { ctx, car } = await makeWorld();
+    expect(car.drivetrain.engineRunning).toBe(false);
+    car.parkingBrake = false;
+    const z0 = car.curr.pos.z;
+    run(ctx, car, input({ forward: 0.6 }), 4);
+    expect(car.drivetrain.engineRunning).toBe(true);
+    expect(car.curr.pos.z - z0).toBeGreaterThan(1);
+  });
+
+  it('W drives forward in D and S drives backwards in R from a standstill', async () => {
+    const { ctx, car } = await makeWorld();
+    getReady(ctx, car);
+    run(ctx, car, input({ forward: 0.4 }), 2);
+    expect(car.drivetrain.selector).toBe('D');
+    expect(car.speedMs).toBeGreaterThan(0.5);
+    run(ctx, car, input(), 4); // let go: the car stops
+    expect(Math.abs(car.speedMs)).toBeLessThan(0.05);
+    run(ctx, car, input({ back: 0.4 }), 2);
+    expect(car.drivetrain.selector).toBe('R');
+    expect(car.speedMs).toBeLessThan(-0.5);
+  });
+
+  it('letting go of the pedal brings the car to a stop within a few metres and holds it', async () => {
+    const { ctx, car } = await makeWorld();
+    getReady(ctx, car);
+    run(ctx, car, input({ forward: 0.5 }), 3);
+    const v0 = car.speedMs;
+    expect(v0).toBeGreaterThan(3);
+    const z0 = car.curr.pos.z;
+    run(ctx, car, input(), 8);
+    expect(Math.abs(car.speedMs)).toBeLessThan(0.05);
+    const stopDist = car.curr.pos.z - z0;
+    expect(stopDist).toBeLessThan((v0 * v0) / (2 * 2.5) + 0.5); // slows at 2.5 m/s² or better
+    expect(stopDist).toBeGreaterThan(0.5 * ((v0 * v0) / (2 * 4)));
+    const z1 = car.curr.pos.z;
+    run(ctx, car, input(), 5);
+    expect(Math.abs(car.curr.pos.z - z1)).toBeLessThan(0.01);
+  });
+
+  it('S brakes a car moving forward to a stop, waits a moment, then reverses', async () => {
+    const { ctx, car } = await makeWorld();
+    getReady(ctx, car);
+    run(ctx, car, input({ forward: 1 }), 5);
+    expect(car.speedKmh).toBeGreaterThan(20);
+    let stoppedAt = -1;
+    let t = 0;
+    let slowestReverse = 0;
+    run(ctx, car, input({ back: 1 }), 5, () => {
+      t += dt;
+      if (stoppedAt < 0 && car.speedMs < 0.2) stoppedAt = t;
+      if (stoppedAt >= 0 && t < stoppedAt + 0.2) slowestReverse = Math.min(slowestReverse, car.speedMs);
+    });
+    expect(stoppedAt).toBeGreaterThan(0);
+    expect(slowestReverse).toBeGreaterThan(-0.3); // still braking during the pause
+    expect(car.drivetrain.selector).toBe('R');
+    expect(car.speedMs).toBeLessThan(-1); // then reversing
+  });
+
+  it('W brakes a reversing car to a stop before driving forward', async () => {
+    const { ctx, car } = await makeWorld();
+    getReady(ctx, car);
+    run(ctx, car, input({ back: 0.6 }), 3);
+    expect(car.speedMs).toBeLessThan(-0.8);
+    run(ctx, car, input({ forward: 1 }), 5);
+    expect(car.drivetrain.selector).toBe('D');
+    expect(car.speedMs).toBeGreaterThan(0.5);
   });
 
   it('AC-3: 0-100 km/h in 9-13 s through at least 4 gears without exceeding the rev limit', async () => {
@@ -62,24 +104,10 @@ describe('drivetrain in the vehicle', () => {
     expect(maxRpm).toBeLessThanOrEqual(XUV_DRIVETRAIN.revLimitRpm + 50);
   });
 
-  it('AC-5: in P, full throttle revs the engine but the car stays put', async () => {
-    const { ctx, car } = await makeWorld();
-    car.toggleIgnition();
-    run(ctx, car, input(), 2);
-    car.parkingBrake = false;
-    const z0 = car.curr.pos.z;
-    let maxRpm = 0;
-    run(ctx, car, input({ forward: 1 }), 4, () => {
-      maxRpm = Math.max(maxRpm, car.drivetrain.engineRpm);
-    });
-    expect(Math.abs(car.curr.pos.z - z0)).toBeLessThan(0.05);
-    expect(maxRpm).toBeGreaterThan(3000);
-  });
-
-  it('engine idles near idle rpm after starting and holds at a stop on the brake in D', async () => {
+  it('engine idles near idle rpm after starting and stays there at a standstill', async () => {
     const { ctx, car } = await makeWorld();
     getReady(ctx, car);
-    run(ctx, car, input({ back: 1 }), 3);
+    run(ctx, car, input(), 3);
     expect(Math.abs(car.speedKmh)).toBeLessThan(0.5);
     expect(car.drivetrain.engineRpm).toBeGreaterThan(600);
     expect(car.drivetrain.engineRpm).toBeLessThan(800);

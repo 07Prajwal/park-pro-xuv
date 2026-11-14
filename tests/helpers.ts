@@ -21,7 +21,7 @@ export function run(ctx: PhysicsContext, car: VehiclePhysics, inp: DriveInput, s
   }
 }
 
-/** Flat world with the XUV parked (P, parking brake on, engine off), settled on its suspension. */
+/** Flat world with the XUV parked (parking brake on, engine off), settled on its suspension. */
 export async function makeWorld(): Promise<{ ctx: PhysicsContext; car: VehiclePhysics }> {
   const ctx = await createPhysics();
   ctx.world.createCollider(ctx.R.ColliderDesc.cuboid(800, 0.5, 800).setTranslation(0, -0.5, 0));
@@ -39,14 +39,9 @@ export async function makeLevelWorld(layout: LevelLayout): Promise<{ ctx: Physic
   return w;
 }
 
-/** Start the engine, hold the brake, select `gear` and release the parking brake. */
-export function getReady(ctx: PhysicsContext, car: VehiclePhysics, gear: 'D' | 'R' = 'D'): void {
+/** Start the engine and release the parking brake. There is no selector: W and S choose the direction. */
+export function getReady(ctx: PhysicsContext, car: VehiclePhysics): void {
   car.toggleIgnition();
-  run(ctx, car, input({ back: 1 }), 2);
-  const steps = gear === 'D' ? 3 : 1;
-  for (let i = 0; i < steps; i++) {
-    const r = car.shiftSelector(1);
-    if (!r.ok) throw new Error(`shift refused: ${r.reason}`);
-  }
+  run(ctx, car, input(), 2);
   car.parkingBrake = false;
 }

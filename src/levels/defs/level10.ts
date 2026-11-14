@@ -67,7 +67,7 @@ function gateEntry(d: Difficulty): LevelLayout {
   const hints = (s: number): [string, string, string] => [
     '',
     `Turn the wheel ${lockWord(s)} onto the forecourt, lining the car up with the gate.`,
-    'Be straight before the gate, centred between the posts in both mirrors. Creep through, stop in the porch and select P.',
+    'Be straight before the gate, centred between the posts in both mirrors. Drive through slowly and stop in the porch.',
   ];
   L.ideal = bestManoeuvre(
     L,
@@ -94,7 +94,7 @@ export const level10: LevelDef = {
     'Approach slowly in the left lane. The rear wheels cut inside the front wheels, so turn a little later than feels natural.',
     'Finish the turn with the car pointing straight at the gate, with room to spare before it.',
     'Use both door mirrors to centre the car between the posts; the gap each side is only a hand’s width or two.',
-    'Creep in, stop in the porch and select P.',
+    'Drive in slowly and stop in the porch.',
   ],
   build: gateEntry,
 };

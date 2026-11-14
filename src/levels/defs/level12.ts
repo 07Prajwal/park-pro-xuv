@@ -13,7 +13,7 @@ const LANE_X = 1.8;
 /**
  * Level 12: a hill street, up one side and down the other. Park in a marked
  * kerbside space on the way up and another on the way down; on a hill the car
- * must be held by both the parking brake and P. Rolling back is penalised.
+ * must be held by the parking brake. Rolling back is penalised.
  */
 function hill(d: Difficulty): LevelLayout {
   const L = emptyLayout();
@@ -71,7 +71,7 @@ function hill(d: Difficulty): LevelLayout {
       facing: 'forward',
       maxAngleDeg: { beginner: 8, normal: 6, hard: 5 }[d],
       kerb: { rect: { x: HALF_ROAD + 0.15, z: cz, yaw: 0, w: 0.3, l: bayLen }, maxGapM: { beginner: 0.5, normal: 0.4, hard: 0.35 }[d] },
-      secure: 'both',
+      needsParkingBrake: true,
       name,
     };
   };
@@ -90,7 +90,7 @@ function hill(d: Difficulty): LevelLayout {
   const lateral = BAY_X - LANE_X;
   const sIn = sBend(lateral, 0.2, CAR, ['Steer gently left into the marked space by the kerb…', '…then steer right to come straight, close to the kerb.']);
   const sOut = sBend(-lateral, 0.8, CAR, [
-    'Foot on the brake, select D, then release the parking brake (Space) and pull out to the right. Check the right mirror.',
+    'Press W to pull out to the right; the parking brake releases by itself. Check the right mirror.',
     'Straighten up in the lane.',
   ]);
   const sIn2 = sBend(lateral, 0.2, CAR, ['Steer gently left into the downhill space…', '…and straighten up close to the kerb.']);
@@ -106,13 +106,13 @@ function hill(d: Difficulty): LevelLayout {
       dir: 1,
       steer: 0,
       dist: settle,
-      hint: 'Stop inside the space. Hold the brake, apply the parking brake (Space) and select P — on a hill you need both.',
+      hint: 'Stop inside the space and apply the parking brake (Space).',
       stop: true,
     },
     ...sOut.segs,
     { dir: 1, steer: 0, dist: c, hint: 'Drive over the top. Going down, cover the brake: the car speeds up on its own.' },
     ...sIn2.segs,
-    { dir: 1, steer: 0, dist: settle, hint: 'Stop inside the space, apply the parking brake and select P.' },
+    { dir: 1, steer: 0, dist: settle, hint: 'Stop inside the space and apply the parking brake (Space).' },
   ];
   L.ideal = a > 0 && c > 0 ? ideal : undefined;
   L.rules = { rollbackM: 0.3 };
@@ -142,11 +142,11 @@ function hillHouses(r: () => number, side: 1 | -1, z0: number, z1: number, faceX
 export const level12: LevelDef = {
   id: 12,
   title: 'Uphill and downhill parking',
-  summary: 'Park on the way up a hill and again on the way down. Secure the car with the parking brake and P, and don’t roll back.',
+  summary: 'Park on the way up a hill and again on the way down. Stop in each space with the parking brake on, and don’t roll back.',
   technique: [
-    'Uphill: keep a steady speed with a little extra accelerator. When you stop, hold the brake.',
-    'Apply the parking brake (Space) before selecting P, so the car rests on the brake and not the gearbox lock.',
-    'Pulling away uphill: foot on the brake, select D, release the parking brake, then move to the accelerator smoothly — the car must not roll back.',
+    'Uphill: keep a steady speed with a little extra pressure on W. When you let go the car holds still.',
+    'Apply the parking brake (Space) once you have stopped inside the space.',
+    'Pulling away uphill: press W smoothly; the parking brake releases by itself and the car must not roll back.',
     'Downhill: cover the brake all the way down. Good practice with a kerb: wheels turned towards the kerb downhill, away from it uphill.',
   ],
   build: hill,

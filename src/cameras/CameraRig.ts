@@ -41,6 +41,16 @@ const FOV: Record<CameraMode, number> = {
   rear: 55,
   surround: 80,
 };
+/**
+ * Driver's seat: the eye sits right of the centre line, so a normal field of view loses the
+ * passenger half of the windscreen. The horizontal field of view is fixed (the vertical one
+ * follows the window's aspect ratio) and the look is turned a little towards the passenger side,
+ * so both A-pillars and the whole windscreen are visible.
+ */
+const DRIVER_HFOV_DEG = 112;
+const DRIVER_YAW_BIAS = 0.17;
+const DRIVER_VFOV_MIN = 62;
+const DRIVER_VFOV_MAX = 96;
 const LOOK_RAD_PER_PX = 0.005;
 const LOOK_RETURN_DELAY_S = 1.2;
 
@@ -133,6 +143,7 @@ export class CameraRig {
         break;
       case 'driver':
       case 'bonnet': {
+        if (this.mode === 'driver') this.fitDriverFov();
         if (dx !== 0 || dy !== 0) {
           this.lookYaw = clamp(this.lookYaw - dx * LOOK_RAD_PER_PX, -2.4, 2.4);
           this.lookPitch = clamp(this.lookPitch - dy * LOOK_RAD_PER_PX, -0.9, 0.7);
@@ -147,7 +158,8 @@ export class CameraRig {
         }
         const eye = this.mode === 'driver' ? this.car.driverEye : this.car.bonnetEye;
         cam.position.copy(eye).applyMatrix4(root.matrixWorld);
-        this.euler.set(this.lookPitch - (this.mode === 'driver' ? 0.06 : 0.1), Math.PI + this.lookYaw, 0);
+        const yawBias = this.mode === 'driver' ? DRIVER_YAW_BIAS : 0;
+        this.euler.set(this.lookPitch - (this.mode === 'driver' ? 0.06 : 0.1), Math.PI + this.lookYaw + yawBias, 0);
         this.q.setFromEuler(this.euler);
         cam.quaternion.copy(root.quaternion).multiply(this.q);
         break;
@@ -184,6 +196,18 @@ export class CameraRig {
         cam.lookAt(p.x, p.y + 0.8, p.z);
         break;
       }
+    }
+  }
+
+  /** Keep the driver's horizontal field of view constant when the window's aspect ratio changes. */
+  private fitDriverFov(): void {
+    const cam = this.camera;
+    const half = (DRIVER_HFOV_DEG * Math.PI) / 360;
+    const v = ((2 * Math.atan(Math.tan(half) / Math.max(cam.aspect, 0.5))) * 180) / Math.PI;
+    const fov = clamp(v, DRIVER_VFOV_MIN, DRIVER_VFOV_MAX);
+    if (Math.abs(fov - cam.fov) > 0.01) {
+      cam.fov = fov;
+      cam.updateProjectionMatrix();
     }
   }
 

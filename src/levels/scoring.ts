@@ -51,7 +51,7 @@ export interface RunStats {
   kerbTouches: number;
   /** Points per kerb touch before strictness (default 5). */
   kerbPenalty?: number;
-  /** Times the car rolled against the selected gear on a slope. */
+  /** Times the car rolled against the driven direction on a slope. */
   rollbacks?: number;
   /** Speed bumps crossed too fast. */
   fastBumps?: number;

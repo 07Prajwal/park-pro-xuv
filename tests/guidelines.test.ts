@@ -12,10 +12,10 @@ describe('reverse guidelines', () => {
 
   it('predicted path matches the physics car reversing 3 m at half lock (within 15 cm)', async () => {
     const { ctx, car } = await makeWorld();
-    // Wind the steering to half lock while holding the brake, before selecting R.
-    run(ctx, car, input({ back: 1, steer: 0.5 }), 2);
-    getReady(ctx, car, 'R');
-    run(ctx, car, input({ back: 1, steer: 0.5 }), 1);
+    // Wind the steering to half lock while standing still, then start reversing.
+    getReady(ctx, car);
+    run(ctx, car, input({ steer: 0.5 }), 2);
+    run(ctx, car, input({ back: 0.25, steer: 0.5 }), 1);
 
     const angle = car.centreSteerAngle;
     expect(angle).toBeGreaterThan(0.1);
@@ -30,11 +30,11 @@ describe('reverse guidelines', () => {
     };
     const start = axle();
 
-    // Creep backwards (brake released, no throttle) until the rear axle has travelled 3 m along its path.
+    // Reverse gently until the rear axle has travelled 3 m along its path.
     let travelled = 0;
     let last = start;
     for (let i = 0; i < 60 * 30 && travelled < 3; i++) {
-      run(ctx, car, input({ steer: 0.5 }), dt);
+      run(ctx, car, input({ back: 0.25, steer: 0.5 }), dt);
       const now = axle();
       travelled += Math.hypot(now.x - last.x, now.z - last.z);
       last = now;

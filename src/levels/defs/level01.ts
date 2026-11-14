@@ -41,9 +41,9 @@ function practiceLot(): LevelLayout {
 export const level01: LevelDef = {
   id: 1,
   title: 'Free practice lot',
-  summary: 'An empty lot with bays, pillars and cones. Get a feel for the XUV’s size, creep and turning circle.',
+  summary: 'An empty lot with bays, pillars and cones. Get a feel for the XUV’s size, its brakes and turning circle.',
   technique: [
-    'Start the engine (I), hold the brake and select D. Release the brake and let the car creep.',
+    'Press W to start the engine and drive forward; the car stops as soon as you let go. Press S to brake; once the car has stopped, S reverses.',
     'Drive through the cone slalom and around the cone ring at full lock to feel the 5.4 m turning radius.',
     'Practise stopping with your front bumper on a bay line — use the bonnet and top-down cameras to check.',
   ],

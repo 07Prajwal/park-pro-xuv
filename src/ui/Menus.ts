@@ -112,10 +112,9 @@ export class Menus {
     if (rules?.rollbackM) facts.push(`No rolling back more than ${(rules.rollbackM * 100).toFixed(0)} cm`);
     if (layout.gates?.length && layout.target) facts.push(`${layout.gates.length} checkpoints on the way`);
     if (layout.parTimeS > 0) facts.push(`Par time ${layout.parTimeS} s`);
-    const secureBoth = layout.target?.secure === 'both';
-    const finishNote = secureBoth
-      ? `Finish ${stops ? 'each space' : 'the space'} by stopping inside it, applying the parking brake <b>and</b> selecting P.`
-      : 'Finish by stopping inside the space and selecting P or applying the parking brake.';
+    const finishNote = layout.target?.needsParkingBrake
+      ? `Finish ${stops ? 'each space' : 'the space'} by stopping inside it and applying the parking brake (<b>Space</b>).`
+      : 'Finish by stopping inside the space.';
     this.open(
       'tutorial',
       `<div class="panel">

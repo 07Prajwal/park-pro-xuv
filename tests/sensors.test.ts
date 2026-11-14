@@ -11,8 +11,8 @@ describe('parking sensors', () => {
     const rearZ = -d.wheelbaseM / 2 - (d.lengthM - d.wheelbaseM - d.frontOverhangM);
     const gap = 1.0;
     ctx.world.createCollider(ctx.R.ColliderDesc.cuboid(3, 1, 0.1).setTranslation(0, 1, rearZ - gap - 0.1));
-    getReady(ctx, car, 'R');
-    run(ctx, car, input({ back: 1 }), 0.2);
+    getReady(ctx, car);
+    run(ctx, car, input(), 0.2);
     const sensors = new ParkingSensors(ctx.R, ctx.world, car.body, d);
     sensors.update(0.016, car.drivetrain.selector, car.speedKmh, true);
     expect(sensors.active).toBe(true);
@@ -21,14 +21,14 @@ describe('parking sensors', () => {
     expect(sensors.nearest).not.toBeNull();
   });
 
-  it('are off in P and in D above 12 km/h', async () => {
+  it('are off in D above 12 km/h and on in D below it and in R', async () => {
     const { ctx, car } = await makeWorld();
     const sensors = new ParkingSensors(ctx.R, ctx.world, car.body, XUV_7XO);
-    sensors.update(0.016, 'P', 0, true);
-    expect(sensors.nearest).toBeNull();
     sensors.update(0.016, 'D', 20, true);
     expect(sensors.active).toBe(false);
     sensors.update(0.016, 'D', 8, true);
+    expect(sensors.active).toBe(true);
+    sensors.update(0.016, 'R', 5, true);
     expect(sensors.active).toBe(true);
   });
 });

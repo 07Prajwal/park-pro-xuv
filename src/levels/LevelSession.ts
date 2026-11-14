@@ -215,7 +215,7 @@ export class LevelSession {
     if (!t) return ev;
     this.verdict = evaluateParking(car.pose, t, this.dim);
     const onFloor = Math.abs((t.zone.level ?? 0) - car.y) < 1;
-    const secured = t.secure === 'both' ? car.selector === 'P' && car.parkingBrake : car.selector === 'P' || car.parkingBrake;
+    const secured = !t.needsParkingBrake || car.parkingBrake;
     if (onFloor && this.verdict.ok && Math.abs(car.speedMs) < STOPPED_MS && secured) {
       this.parkedTime += dt;
       if (this.parkedTime > PARKED_STILL_S) {
@@ -240,7 +240,7 @@ export class LevelSession {
   }
 
   private secureHint(t: ParkingTarget): string {
-    return t.secure === 'both' ? 'Hold the brake, apply the parking brake (Space) and select P.' : 'Stop, select P (or apply the parking brake).';
+    return t.needsParkingBrake ? 'Stop inside the space and apply the parking brake (Space).' : 'Stop inside the space.';
   }
 
   private updateKerb(car: CarState, dt: number): boolean {
@@ -298,12 +298,12 @@ export class LevelSession {
     });
   }
 
-  /** Rolling against the selected gear (or in N) further than the rule allows counts once per roll. */
+  /** Rolling against the driven direction further than the rule allows counts once per roll. */
   private updateRollback(car: CarState, dt: number): void {
     const limit = this.layout.rules?.rollbackM;
     if (limit === undefined) return;
     const v = car.speedMs;
-    const against = (car.selector === 'D' && v < -ROLLING_MS) || (car.selector === 'R' && v > ROLLING_MS) || (car.selector === 'N' && Math.abs(v) > ROLLING_MS);
+    const against = (car.selector === 'D' && v < -ROLLING_MS) || (car.selector === 'R' && v > ROLLING_MS);
     if (!against) {
       this.rolled = 0;
       this.rollCounted = false;

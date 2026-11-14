@@ -1,6 +1,6 @@
 /**
- * HUD overlay: speed, tachometer, P/R/N/D selector with current gear, tell-tales
- * (parking brake, auto hold, indicators, headlights), driver messages and FPS,
+ * HUD overlay: speed, tachometer, current direction (R/D) with gear, tell-tales
+ * (parking brake, indicators, headlights), driver messages and FPS,
  * plus the level panel (timer and penalties), the step hint, the parking-sensor
  * display and status chips (slow motion, ghost demo...).
  *
@@ -43,8 +43,6 @@ export interface HudData {
   engineRunning: boolean;
   cranking: boolean;
   parkingBrake: boolean;
-  autoHoldEnabled: boolean;
-  autoHoldActive: boolean;
   leftLit: boolean;
   rightLit: boolean;
   headlights: boolean;
@@ -80,7 +78,6 @@ export class Hud {
         <div class="hud-row hud-telltales">
           <span class="tt tt-left" data-k="left">◀</span>
           <span class="tt tt-epb" data-k="epb">(P)</span>
-          <span class="tt tt-hold" data-k="hold">A</span>
           <span class="tt tt-lights" data-k="lights">≣D</span>
           <span class="tt tt-right" data-k="right">▶</span>
           <span class="hud-rpm"><span data-k="rpm">0</span> rpm</span>
@@ -100,7 +97,7 @@ export class Hud {
         <div class="hud-sensor-dist" data-k="sensorDist"></div>
       </div>
       <div class="hud-message" data-k="message"></div>
-      <div class="hud-help">I engine · E/Q gear D↔P (hold brake) · W/S pedals (Shift = gentle) · A/D steer · Space park brake · B auto hold · , . / indicators · L lights · H horn · C / 1–7 camera · drag look · M mirrors · G guides · O Eon · V rear cam · T slow-mo · K last stop · R / ⌫ retry · Esc menu</div>`;
+      <div class="hud-help">W/↑ forward · S/↓ brake and reverse (Shift = gentle) · A/D steer · Space parking brake · I engine · , . / indicators · L lights · H horn · C / 1–7 camera · drag look · M mirrors · G guides · O Eon · V rear cam · T slow-mo · K last stop · R / ⌫ retry · Esc menu</div>`;
     for (const n of root.querySelectorAll<HTMLElement>('[data-k]')) this.el[n.dataset.k!] = n;
     this.gearEls = Object.fromEntries(
       GEAR_ORDER.map((g) => [g, root.querySelector<HTMLElement>(`[data-g="${g}"]`)!]),
@@ -130,8 +127,6 @@ export class Hud {
     for (const g of GEAR_ORDER) this.gearEls[g].classList.toggle('on', g === d.selector);
     this.text('gear', d.selector === 'D' ? String(d.gear) : '');
     this.toggle('epb', d.parkingBrake);
-    this.toggle('hold', d.autoHoldEnabled);
-    this.el.hold.classList.toggle('active', d.autoHoldActive);
     this.toggle('lights', d.headlights);
     const deg = Math.round(Math.abs(d.steerDeg));
     this.text('steer', deg === 0 ? '0°' : `${deg}° ${d.steerDeg > 0 ? 'L' : 'R'}`);
@@ -139,7 +134,7 @@ export class Hud {
     this.text('camera', d.cameraLabel);
 
     let msg = d.messageAge < MESSAGE_S ? d.message : '';
-    if (!msg && !d.engineRunning && !d.cranking) msg = 'Engine off — press I to start (in P or N)';
+    if (!msg && !d.engineRunning && !d.cranking) msg = 'Engine off — press W or S (or I) to start';
     this.text('message', msg);
     this.el.message.classList.toggle('show', msg !== '');
   }
