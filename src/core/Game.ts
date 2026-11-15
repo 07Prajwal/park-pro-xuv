@@ -11,6 +11,7 @@
 import { PAINT_COLOURS, PHYSICS, XUV_7XO, XUV_DRIVETRAIN, XUV_TUNING } from '../config';
 import { AudioEngine } from '../audio/AudioEngine';
 import { CAMERA_MODES, CameraRig, type CameraMode } from '../cameras/CameraRig';
+import { DashSurround } from '../cameras/DashSurround';
 import { InteriorMirror } from '../cameras/InteriorMirror';
 import { PipOverlay, PipView, type ScreenRect } from '../cameras/PipView';
 import { GUIDE_LAYER } from '../cameras/reverseGuidelines';
@@ -63,6 +64,7 @@ export class Game {
   /** [right mirror (driver's side), left mirror]. */
   private readonly mirrorPips: PipView[];
   private readonly interiorMirror: InteriorMirror;
+  private readonly dashSurround: DashSurround;
   private readonly settings: Settings;
   private readonly progress: Progress;
   private devSteer: number | null = null;
@@ -135,6 +137,8 @@ export class Game {
       return pip;
     });
     this.interiorMirror = new InteriorMirror(root, this.carVisual.interiorMirrorMount, this.carVisual.interiorMirrorGlass);
+    const cv = this.carVisual;
+    this.dashSurround = new DashSurround(root, cv.centreScreen, cv.frontCameraMount, cv.rearCameraMount);
 
     this.keyboard = new KeyboardInput(this.input, XUV_TUNING.pedals);
     new PointerInput(this.input, gfx.renderer.domElement);
@@ -179,6 +183,7 @@ export class Game {
     if (q.has('x') && q.has('z')) this.placeCar({ x: Number(q.get('x')), z: Number(q.get('z')), yaw: Number(q.get('yaw') ?? 0) }, Number(q.get('y') ?? 0));
     const gear = q.get('gear');
     if (gear === 'D' || gear === 'R') this.car.drivetrain.selector = gear;
+    if (q.has('engine')) this.car.drivetrain.startEngine();
     if (q.has('steer')) this.devSteer = Number(q.get('steer')); // dev: hold the wheel at a fixed position
     if (q.has('fast')) this.resultDelayS = 0.01;
     if (q.has('demo')) this.startDemo();
@@ -424,10 +429,14 @@ export class Game {
     const mirrors = !rearFull && !demo && (s.mirrors === 'all' ? !overhead : s.mirrors === 'cabin' && inCabin);
     for (const pip of this.mirrorPips) pip.visible = mirrors;
     this.interiorMirror.visible = mode === 'driver';
-    if (this.rearPip.visible || this.rig.showGuides) this.carVisual.pathGuide.update(this.car.centreSteerAngle);
+    // The 360° view comes up on the centre screen with the parking sensors (R, or slow in D).
+    this.dashSurround.visible = mode === 'driver' && (d.engineRunning || d.cranking) && this.sensors.active;
+    this.dashSurround.setReversing(reversing);
+    if (this.rearPip.visible || this.rig.showGuides || this.dashSurround.visible) this.carVisual.pathGuide.update(this.car.centreSteerAngle);
 
     const renderer = this.gfx.renderer;
     this.interiorMirror.render(renderer, this.gfx.scene);
+    this.dashSurround.render(renderer, this.gfx.scene);
     if (rearFull) renderer.shadowMap.needsUpdate = true;
     else this.gfx.render(dt);
     this.rearPip.render(renderer, this.gfx.scene);

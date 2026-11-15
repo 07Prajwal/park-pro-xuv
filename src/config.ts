@@ -88,6 +88,8 @@ export interface VehicleTuning {
     compressionDamping: number;
     relaxationDamping: number;
     maxForceN: number;
+    /** Rate (1/s) at which the dampers and anti-roll bars kill body pitch and roll motion. */
+    bodyDampingPerS: number;
   };
 
   tyre: {
@@ -156,15 +158,16 @@ export interface VehicleTuning {
 
 export const XUV_TUNING: VehicleTuning = {
   massKg: 1950,
-  comHeightM: 0.68,
+  comHeightM: 0.6,
 
   suspension: {
     restLengthM: 0.3,
     maxTravelM: 0.22,
-    stiffness: 28,
-    compressionDamping: 2.6,
-    relaxationDamping: 3.4,
+    stiffness: 60,
+    compressionDamping: 4.4,
+    relaxationDamping: 5.6,
     maxForceN: 100000,
+    bodyDampingPerS: 25,
   },
 
   tyre: {

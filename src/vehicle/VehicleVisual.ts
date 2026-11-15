@@ -12,7 +12,7 @@ import * as THREE from 'three';
 import type { PaintColour } from '../config';
 import { ReverseGuidelines } from '../cameras/reverseGuidelines';
 import { buildCarBody, buildWheel, type CarLampMaterials } from './carGeometry';
-import { buildInterior, DRIVER_EYE, INTERIOR_MIRROR, type CarInterior } from './carInterior';
+import { buildInterior, DRIVER_EYE, INTERIOR_MIRROR, type CarInterior, type ScreenArea } from './carInterior';
 import type { VehicleLights } from './VehicleLights';
 import { WHEEL_COUNT, type VehiclePhysics } from './VehiclePhysics';
 
@@ -31,9 +31,11 @@ export class VehicleVisual {
   readonly driverEye: THREE.Vector3;
   readonly bonnetEye: THREE.Vector3;
   readonly rearCameraMount: THREE.Vector3;
+  readonly frontCameraMount: THREE.Vector3;
   readonly mirrorMounts: THREE.Vector3[];
   readonly interiorMirrorMount: THREE.Vector3;
   readonly interiorMirrorGlass: THREE.Mesh;
+  readonly centreScreen: ScreenArea;
 
   private readonly wheelPivots: THREE.Group[] = [];
   private readonly wheelSpins: THREE.Group[] = [];
@@ -89,9 +91,11 @@ export class VehicleVisual {
     this.driverEye = DRIVER_EYE.clone().add(shift);
     this.bonnetEye = new THREE.Vector3(0, 1.3, 0.78).add(shift);
     this.rearCameraMount = new THREE.Vector3(0, 1.0, -d.lengthM / 2 - 0.02).add(shift);
+    this.frontCameraMount = new THREE.Vector3(0, 0.75, d.lengthM / 2 + 0.02).add(shift);
     this.mirrorMounts = body.mirrorPositions.map((p) => p.clone().add(shift));
     this.interiorMirrorMount = INTERIOR_MIRROR.clone().add(shift);
     this.interiorMirrorGlass = this.interior.mirrorGlass;
+    this.centreScreen = this.interior.centreScreen;
   }
 
   setPaint(p: PaintColour): void {

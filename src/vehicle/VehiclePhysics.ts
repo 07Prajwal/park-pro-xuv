@@ -97,6 +97,9 @@ export class VehiclePhysics {
   private spawn: Spawn;
   /** Seconds left of the pause after the opposite pedal has braked the car to a stop, before it drives off the other way. */
   private reversalWait = 0;
+  /** Chassis pitch (about x) and roll (about z) inertia, kg·m². */
+  private readonly pitchInertia: number;
+  private readonly rollInertia: number;
 
   constructor(
     R: Rapier,
@@ -129,6 +132,8 @@ export class VehiclePhysics {
     const lx = dim.widthM;
     const ly = boxHalfH * 2;
     const lz = dim.lengthM;
+    this.pitchInertia = (m / 12) * (ly * ly + lz * lz);
+    this.rollInertia = (m / 12) * (lx * lx + ly * ly);
     const main = world.createCollider(
       R.ColliderDesc.cuboid(dim.widthM / 2, boxHalfH, dim.lengthM / 2)
         .setTranslation(0, boxCentreY, boxCentreZ)
@@ -366,7 +371,30 @@ export class VehiclePhysics {
       this.body.applyImpulse(this.scratch, true);
     }
 
+    this.dampBodyMotion(q, dt);
     vc.updateVehicle(dt, undefined, WHEEL_QUERY_GROUPS);
+  }
+
+  /**
+   * The raycast vehicle has no dampers between the wheels or anti-roll bars, so the body
+   * rocks on its springs after every pedal change and turn. Take out a fraction of the
+   * pitch and roll rate each step; yaw and the springs' static lean are left alone.
+   */
+  private dampBodyMotion(q: { x: number; y: number; z: number; w: number }, dt: number): void {
+    const w = this.body.angvel();
+    const k = 1 - Math.exp(-this.tuning.suspension.bodyDampingPerS * dt);
+    const lx = 1 - 2 * (q.y * q.y + q.z * q.z);
+    const ly = 2 * (q.x * q.y + q.w * q.z);
+    const lz = 2 * (q.x * q.z - q.w * q.y);
+    const fx = 2 * (q.x * q.z + q.w * q.y);
+    const fy = 2 * (q.y * q.z - q.w * q.x);
+    const fz = 1 - 2 * (q.x * q.x + q.y * q.y);
+    const pitch = -(w.x * lx + w.y * ly + w.z * lz) * this.pitchInertia * k;
+    const roll = -(w.x * fx + w.y * fy + w.z * fz) * this.rollInertia * k;
+    this.scratch.x = lx * pitch + fx * roll;
+    this.scratch.y = ly * pitch + fy * roll;
+    this.scratch.z = lz * pitch + fz * roll;
+    this.body.applyTorqueImpulse(this.scratch, true);
   }
 
   /** Call once per fixed step AFTER `world.step()`. */

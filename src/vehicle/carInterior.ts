@@ -1,7 +1,7 @@
 /**
  * Right-hand-drive cabin: dashboard with the triple-screen panel (live digital
  * cluster on the driver's side), steering wheel that turns with the steering,
- * three rows of seats, centre console with the selector, headliner and IRVM.
+ * three rows of seats, centre console, headliner and IRVM.
  *
  * Frame: same as the body (+Z forward, +X left, footprint-centred). The driver
  * sits on the right, i.e. at negative X.
@@ -12,7 +12,9 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeVertices } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 /** Driver's eye point in the body frame. */
-export const DRIVER_EYE = new THREE.Vector3(-0.37, 1.3, -0.17);
+export const DRIVER_EYE = new THREE.Vector3(-0.37, 1.42, -0.17);
+/** Front seats are raised to the eye height above (seat height adjuster). */
+const FRONT_SEAT_LIFT = 0.12;
 const WHEEL_CENTRE = new THREE.Vector3(-0.37, 0.98, 0.3);
 
 export interface ClusterData {
@@ -31,6 +33,16 @@ export interface CarInterior {
   drawCluster(d: ClusterData): void;
   /** Glass of the interior rear-view mirror (faces the driver); gets the mirror image as its map. */
   mirrorGlass: THREE.Mesh;
+  /** The centre (infotainment) screen, where the 360° camera view is shown. */
+  centreScreen: ScreenArea;
+}
+
+/** A rectangle on a screen's glass, in the glass's own frame (x to the viewer's right, facing +Z). */
+export interface ScreenArea {
+  glass: THREE.Object3D;
+  left: number;
+  right: number;
+  height: number;
 }
 
 /** Interior mirror centre in the body frame. */
@@ -61,9 +73,9 @@ export function buildInterior(cabinHalfWidth: number, roofY: number): CarInterio
   dash.lineTo(0.92, 0.62);
   dash.lineTo(0.62, 0.56);
   dash.quadraticCurveTo(0.5, 0.6, 0.46, 0.8);
-  dash.lineTo(0.43, 0.95);
-  dash.quadraticCurveTo(0.41, 1.1, 0.52, 1.12);
-  dash.lineTo(0.8, 1.1);
+  dash.lineTo(0.43, 0.92);
+  dash.quadraticCurveTo(0.41, 1.03, 0.52, 1.04);
+  dash.lineTo(0.8, 1.05);
   dash.lineTo(0.92, 1.05);
   const dw = cabinHalfWidth * 2 - 0.02;
   const dashGeo = new THREE.ExtrudeGeometry(dash, { depth: dw - 0.06, bevelEnabled: true, bevelSize: 0.03, bevelThickness: 0.03, bevelSegments: 3, curveSegments: 12 });
@@ -97,10 +109,18 @@ export function buildInterior(cabinHalfWidth: number, roofY: number): CarInterio
     emissiveIntensity: tex ? 1.2 : 0,
   });
   const panelW = 1.15;
-  add(rbox(panelW + 0.03, 0.16, 0.025, 0.01), piano, -0.12, 1.17, 0.5).rotation.x = 0.2;
-  const screen = add(new THREE.PlaneGeometry(panelW, 0.135), screenMat, -0.12, 1.17, 0.486);
+  add(rbox(panelW + 0.03, 0.16, 0.025, 0.01), piano, -0.12, 1.15, 0.5).rotation.x = 0.2;
+  const screen = add(new THREE.PlaneGeometry(panelW, 0.135), screenMat, -0.12, 1.15, 0.486);
   screen.rotation.set(-0.2, Math.PI, 0);
   screen.castShadow = false;
+  // Matches the centre screen drawn on the canvas below (x from 0.33 to 0.64 of the width).
+  const screenH = 0.135;
+  const centreScreen: ScreenArea = {
+    glass: screen,
+    left: (0.33 + 4 / 1024 - 0.5) * panelW,
+    right: (0.64 + 4 / 1024 - 0.5) * panelW,
+    height: screenH * (144 / 160),
+  };
 
   // Steering wheel: tilted column; the inner group spins with the steering.
   const column = new THREE.Group();
@@ -135,16 +155,16 @@ export function buildInterior(cabinHalfWidth: number, roofY: number): CarInterio
   column.add(col);
 
   // Seats: two front buckets, second-row bench, third-row bench.
-  const seat = (x: number, z: number, w: number, backH: number, mat: THREE.Material) => {
-    add(rbox(w, 0.13, 0.5, 0.05), mat, x, 0.64, z);
-    const back = add(rbox(w, backH, 0.12, 0.05), mat, x, 0.66 + backH / 2, z - 0.26);
+  const seat = (x: number, z: number, w: number, backH: number, mat: THREE.Material, lift = 0) => {
+    add(rbox(w, 0.13, 0.5, 0.05), mat, x, 0.64 + lift, z);
+    const back = add(rbox(w, backH, 0.12, 0.05), mat, x, 0.66 + lift + backH / 2, z - 0.26);
     back.rotation.x = -0.22;
     back.position.z -= Math.sin(0.22) * (backH / 2);
-    const head = add(rbox(w * 0.55, 0.16, 0.09, 0.04), mat, x, 0.66 + backH + 0.1, z - 0.26 - Math.sin(0.22) * backH - 0.02);
+    const head = add(rbox(w * 0.55, 0.16, 0.09, 0.04), mat, x, 0.66 + lift + backH + 0.1, z - 0.26 - Math.sin(0.22) * backH - 0.02);
     head.rotation.x = -0.12;
   };
-  seat(-0.37, -0.2, 0.52, 0.66, leather);
-  seat(0.37, -0.2, 0.52, 0.66, leather);
+  seat(-0.37, -0.2, 0.52, 0.66, leather, FRONT_SEAT_LIFT);
+  seat(0.37, -0.2, 0.52, 0.66, leather, FRONT_SEAT_LIFT);
   seat(0, -1.12, 1.42, 0.6, leather);
   seat(0, -1.85, 1.2, 0.52, leather);
 
@@ -208,5 +228,5 @@ export function buildInterior(cabinHalfWidth: number, roofY: number): CarInterio
     tex.needsUpdate = true;
   }
 
-  return { group, steeringWheel, drawCluster, mirrorGlass };
+  return { group, steeringWheel, drawCluster, mirrorGlass, centreScreen };
 }

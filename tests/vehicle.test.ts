@@ -117,3 +117,39 @@ function fitCircleRadius(xs: number[], zs: number[]): number {
   for (let i = 0; i < n; i++) r += Math.hypot(xs[i] - cx, zs[i] - cz);
   return r / n;
 }
+
+describe('body control', () => {
+  /** Nose-up pitch and left-up roll of the body, degrees. */
+  function attitude(car: VehiclePhysics): { pitch: number; roll: number } {
+    const q = car.body.rotation();
+    const deg = 180 / Math.PI;
+    return { pitch: Math.asin(2 * (q.y * q.z - q.w * q.x)) * deg, roll: Math.asin(2 * (q.x * q.y + q.w * q.z)) * deg };
+  }
+
+  it('hard braking from 40 km/h dips the nose under 1.2° and the body settles without rocking', async () => {
+    const { ctx, car } = await makeWorld();
+    getReady(ctx, car);
+    const level = attitude(car).pitch;
+    run(ctx, car, input({ forward: 1 }), 2.2);
+    let dip = 0;
+    for (let t = 0; t < 4 && car.speedMs > 0.02; t += dt) {
+      run(ctx, car, input({ back: 1 }), dt);
+      dip = Math.max(dip, Math.abs(attitude(car).pitch - level));
+    }
+    expect(dip).toBeGreaterThan(0.1);
+    expect(dip).toBeLessThan(1.2);
+    run(ctx, car, input(), 0.5);
+    const swing: number[] = [];
+    run(ctx, car, input(), 1, () => swing.push(attitude(car).pitch));
+    expect(Math.max(...swing) - Math.min(...swing)).toBeLessThan(0.1);
+  });
+
+  it('turning at 30 km/h on half lock leans the body under 0.6°', async () => {
+    const { ctx, car } = await makeWorld();
+    getReady(ctx, car);
+    run(ctx, car, input({ forward: 0.5 }), 1.5);
+    let lean = 0;
+    run(ctx, car, input({ forward: 0.3, steer: 0.5 }), 3, () => (lean = Math.max(lean, Math.abs(attitude(car).roll))));
+    expect(lean).toBeLessThan(0.6);
+  });
+});

@@ -99,14 +99,14 @@ Driving: there is no gear selector. The car moves only while `W` or `S` is held,
 | Key | Camera |
 |---|---|
 | `1` | Chase |
-| `2` | Driver's seat (right-hand drive; the look springs back to the road after you let go) |
+| `2` | Driver's seat (right-hand drive, seat raised so the bonnet edge is visible; the look springs back to the road after you let go) |
 | `3` | Bonnet |
 | `4` | Top-down parking view (turns with the car) |
 | `5` | Orbit |
 | `6` | Rear camera, full screen |
 | `7` | 360° overhead view (shows the guidelines while in R) |
 
-In R, the reverse camera also appears as a picture-in-picture view at the top of the screen (switch with `V`). Like the real display it is mirrored, and the guidelines are the predicted path of the rear bumper corners for the current steering angle, with marks at 0.5 m (red), 1 m and 2 m. The red, yellow and green guide lines stay fixed on the screen. A separate cyan line follows the steering wheel. In the driver's view the interior rear-view mirror shows a live image, and the door mirrors appear as picture-in-picture views. The last camera you used is remembered.
+In R, the reverse camera also appears as a picture-in-picture view at the top of the screen (switch with `V`). Like the real display it is mirrored, and the guidelines are the predicted path of the rear bumper corners for the current steering angle, with marks at 0.5 m (red), 1 m and 2 m. The red, yellow and green guide lines stay fixed on the screen. A separate cyan line follows the steering wheel. In the driver's view the centre infotainment screen shows the 360° camera whenever the parking sensors are on (in R, or below 12 km/h): a bird's-eye view of the car beside the front camera, or the mirrored reverse camera with its guidelines in R. The interior rear-view mirror shows a live image, and the door mirrors appear as picture-in-picture views. The last camera you used is remembered.
 
 ## Graphics quality
 
@@ -147,10 +147,10 @@ tests/                 Headless physics, level, sensor and manoeuvre tests
 Everything lives in `src/config.ts`:
 
 - `XUV_7XO` — real-world dimensions. `turningRadiusM` drives the full-lock steering angle: the Ackermann geometry in `src/vehicle/steering.ts` is solved so the outer front wheel traces exactly this radius.
-- `XUV_TUNING.suspension` — rest length, travel, stiffness and damping (Rapier scales stiffness by chassis mass).
+- `XUV_TUNING.suspension` — rest length, travel, stiffness and damping (Rapier scales stiffness by chassis mass), and `bodyDampingPerS`, which stands in for dampers and anti-roll bars and keeps the body from rocking.
 - `XUV_TUNING.tyre` — `frictionSlip` is roughly the tyre grip coefficient; lower values give earlier understeer and lock-up.
 - `XUV_TUNING.steering` — how fast the wheel winds to lock, self-centring, and the speed-sensitive lock reduction.
 - `XUV_TUNING.brakes` / `pedals` / `resistance` — brake force and bias, EPB and automatic idle-brake force, pedal ramp rates, aero drag and rolling resistance.
 - `XUV_DRIVETRAIN` — engine torque curve, idle governor and friction; torque-converter capacity, stall ratio and lock-up; gear ratios, final drive and the shift schedule (upshift/downshift rpm at light and full throttle).
 
-After changing values, run `npm test`. The tests check the turning circle (about 5.4 m), braking distance from 80 km/h (23–36 m), no creep without a pedal, W/S direction control and brake-then-reverse, 0–100 km/h (9–13 s through at least four gears), idle rpm, and a 120 km/h cruise in 6th with the converter locked. Level tests check that every ideal path ends parked within tolerance and clears all obstacles, and that the physics car can drive the Level 4, 6, 11 and 12 paths and park with no kerb touches or roll-backs. Slope tests check that the automatic hold and the EPB alone each hold the car within 2 cm for 10 s at every hill-parking space, and that the car can climb the Level 8 ramp. A budget test keeps every level under 2 million triangles.
+After changing values, run `npm test`. The tests check the turning circle (about 5.4 m), body pitch under hard braking (under 1.2°, settling without rocking) and roll in a 30 km/h turn (under 0.6°), braking distance from 80 km/h (23–36 m), no creep without a pedal, W/S direction control and brake-then-reverse, 0–100 km/h (9–13 s through at least four gears), idle rpm, and a 120 km/h cruise in 6th with the converter locked. Level tests check that every ideal path ends parked within tolerance and clears all obstacles, and that the physics car can drive the Level 4, 6, 11 and 12 paths and park with no kerb touches or roll-backs. Slope tests check that the automatic hold and the EPB alone each hold the car within 2 cm for 10 s at every hill-parking space, and that the car can climb the Level 8 ramp. A budget test keeps every level under 2 million triangles.

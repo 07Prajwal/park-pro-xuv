@@ -10,11 +10,12 @@ owner: park-pro-xuv developer
 issue: pending
 pull_request: pending
 started: 2026-11-14 18:50
-last_updated: 2026-11-14 19:20
+last_updated: 2026-11-15 13:30
 blocked_by: none
 current_checkpoint: implementation complete
 goal_lock:
-  status: active
+  status: released
+  released: 2026-11-15 13:30
   stamped: 2026-11-14 18:50
   scope:
     - Automatic transmission (P/R/N/D), torque converter creep, engine model, brakes/EPB/auto-hold
@@ -65,3 +66,4 @@ This index is the identity and lifecycle rollup for one schema-v3 feature direct
 - Key bindings: E/X = shift down the gate (P→R→N→D), Q/Z = shift up (D→N→R→P); `,` `.` = indicators, `/` = hazards, R = reset, Space = EPB toggle, B = auto-hold, Shift = fine pedal control — resolves Q/E/Z/R conflicts in the original brief; approved by the project owner ("yes"). (author: prajwr, assisted, main, b0a580e)
 - Realism uses CC0 Poly Haven photo-scanned PBR textures and a real sky HDRI committed under `public/assets/` (with a fetch script for provenance) instead of procedural textures — procedural ground and flat sky read as cartoonish, which the owner explicitly rejected. (author: prajwr, assisted, main, b0a580e)
 - Detailed XUV 7XO styling (grille, split lamps, mirrors, cockpit) stays in Stage 3; Stage 2 only replaces the hard-edged placeholder with a smooth, bevelled body, clearcoat paint, glass and realistic wheels. (author: prajwr, assisted, main, b0a580e)
+- Goal lock released: Stage 2 shipped (`e88089c`) and Stages 3–5 plus the pedal-only driving change (`51b36e8`, which removed the P/R/N/D selector and auto-hold) superseded its scope; released at the project owner's request so later work is not blocked. (author: prajwr, assisted, main, 51b36e8)
